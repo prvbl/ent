@@ -7,6 +7,7 @@
 package migrate
 
 import (
+	"github.com/facebook/ent/dialect/entsql"
 	"github.com/facebook/ent/dialect/sql/schema"
 	"github.com/facebook/ent/schema/field"
 )
@@ -57,6 +58,7 @@ var (
 		Columns:     UsersColumns,
 		PrimaryKey:  []*schema.Column{UsersColumns[0]},
 		ForeignKeys: []*schema.ForeignKey{},
+		Annotation:  &entsql.Annotation{Unique: (*bool)(0xc000989d18)},
 	}
 	// UserFriendsColumns holds the columns for the "user_friends" table.
 	UserFriendsColumns = []*schema.Column{
