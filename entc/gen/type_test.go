@@ -249,6 +249,21 @@ func TestType_AddIndex(t *testing.T) {
 	require.NoError(t, err, "valid index on M2O relation and field")
 }
 
+func TestType_ExplicitlySetNil(t *testing.T) {
+	tests := []struct {
+		annotations map[string]interface{}
+		expected    bool
+	}{
+		{nil, true},
+		{dict("EntSQL", dict("create_explicitly_set_nil", true)), true},
+		{dict("EntSQL", dict("create_explicitly_set_nil", false)), false},
+	}
+	for _, tt := range tests {
+		typ := &Type{Annotations: tt.annotations}
+		require.Equal(t, tt.expected, typ.ExplicitlySetNil())
+	}
+}
+
 func TestField_Constant(t *testing.T) {
 	tests := []struct {
 		name     string

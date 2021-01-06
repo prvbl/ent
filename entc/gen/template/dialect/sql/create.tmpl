@@ -93,7 +93,13 @@ func ({{ $receiver }} *{{ $builder }}) createSpec() (*{{ $.Name }}, *sqlgraph.Cr
 				_spec.SetField({{ $.Package }}.{{ $f.Constant }}, field.{{ $f.Type.ConstName }}, value)
 			{{- end }}
 			_node.{{ $f.StructField }} = {{ if $f.NillableValue }}&{{ end }}value
+		{{ if and $.ExplicitlySetNil $f.Optional -}}
+		} else if {{ $mutation }}.{{ $f.MutationCleared }}() {
+			_spec.SetField({{ $.Package }}.{{ $f.Constant }}, field.{{ $f.Type.ConstName }}, nil)
 		}
+		{{ else -}}
+		}
+		{{- end }}
 	{{- end }}
 	{{- range $e := $.EdgesWithID }}
 		if nodes := {{ $mutation }}.{{ $e.StructField }}IDs(); len(nodes) > 0 {

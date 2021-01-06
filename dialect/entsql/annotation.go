@@ -115,6 +115,12 @@ type Annotation struct {
 	//
 	WithComments *bool `json:"with_comments,omitempty"`
 
+	// ExplicitlySetNil defines if the query builder for creates should always explicitly set nillable fields to nil
+	//
+	// By default, this value is nil defaulting to false.
+	//
+	ExplicitlySetNil *bool `json:"create_explicitly_set_nil,omitempty"`
+
 	// Incremental defines the auto-incremental behavior of a column. For example:
 	//
 	//  incrementalEnabled := true
@@ -414,6 +420,9 @@ func (a Annotation) Merge(other schema.Annotation) schema.Annotation {
 	}
 	if i := ant.Incremental; i != nil {
 		a.Incremental = i
+	}
+	if s := ant.ExplicitlySetNil; s != nil {
+		a.ExplicitlySetNil = s
 	}
 	if od := ant.OnDelete; od != "" {
 		a.OnDelete = od

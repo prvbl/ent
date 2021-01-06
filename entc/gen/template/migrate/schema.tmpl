@@ -233,6 +233,11 @@ func init() {
 					{{- end }}
 				}
 			{{- end }}
+
+			{{- with $ant.ExplicitlySetNil }}
+				{{ $table }}.Annotation.ExplicitlySetNil = new(bool)
+				*{{ $table }}.Annotation.ExplicitlySetNil = {{ with indirect . }}true{{ else }}false{{ end }}
+			{{- end }}
 		{{- end }}
 	{{- end }}
 }
