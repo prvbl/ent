@@ -526,7 +526,7 @@ func (uq *UserQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   uq.sql,
-		Unique: true,
+		Unique: false,
 	}
 	if fields := uq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
