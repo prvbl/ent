@@ -103,6 +103,11 @@ func ({{ $receiver }} *{{ $.Name }}) Unwrap() *{{ $.Name }} {
 	return {{ $receiver }}
 }
 
+// TableName returns the table name of the {{ $.Name }} in the database.
+func ({{ $receiver }} *{{ $.Name }}) TableName() string {
+	return {{ $.Package }}.Table
+}
+
 {{ template "model/stringer" $ }}
 
 {{ $slice := plural $.Name }}
