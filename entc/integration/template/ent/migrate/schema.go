@@ -7,6 +7,7 @@
 package migrate
 
 import (
+	"github.com/facebook/ent/dialect/entsql"
 	"github.com/facebook/ent/dialect/sql/schema"
 	"github.com/facebook/ent/schema/field"
 )
@@ -96,6 +97,9 @@ var (
 
 func init() {
 	PetsTable.ForeignKeys[0].RefTable = UsersTable
+	UsersTable.Annotation = &entsql.Annotation{}
+	UsersTable.Annotation.Unique = new(bool)
+	*UsersTable.Annotation.Unique = false
 	UserFriendsTable.ForeignKeys[0].RefTable = UsersTable
 	UserFriendsTable.ForeignKeys[1].RefTable = UsersTable
 }

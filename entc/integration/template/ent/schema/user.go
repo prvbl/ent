@@ -6,6 +6,8 @@ package schema
 
 import (
 	"github.com/facebook/ent"
+	"github.com/facebook/ent/dialect/entsql"
+	"github.com/facebook/ent/schema"
 	"github.com/facebook/ent/schema/edge"
 	"github.com/facebook/ent/schema/field"
 )
@@ -27,5 +29,13 @@ func (User) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.To("pets", Pet.Type),
 		edge.To("friends", User.Type),
+	}
+}
+
+// Annotations of the User.
+func (User) Annotations() []schema.Annotation {
+	uniqueEnabled := false
+	return []schema.Annotation{
+		entsql.Annotation{Unique: &uniqueEnabled},
 	}
 }

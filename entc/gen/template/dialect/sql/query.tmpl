@@ -100,7 +100,7 @@ func ({{ $receiver }} *{{ $builder }}) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From: {{ $receiver }}.sql,
-		Unique: true,
+		Unique: {{ $.IsUnique }},
 	}
 	if fields := {{ $receiver }}.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
