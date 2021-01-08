@@ -10,12 +10,25 @@ in the LICENSE file in the root directory of this source tree.
 		withFKs bool
 	{{- end }}
 	unique *bool
+	withLock ent.LockType
 {{- end }}
 
 {{ define "dialect/sql/query" }}
 {{ $pkg := $.Scope.Package }}
 {{ $builder := pascal $.Scope.Builder }}
 {{ $receiver := receiver $builder }}
+
+// LockForUpdate locks any rows read as if you issued an update for those rows.
+func ({{ $receiver }} *{{ $builder }}) LockForUpdate() *{{ $builder }} {
+	{{ $receiver }}.withLock = LockForUpdate
+	return {{ $receiver }}
+}
+
+// LockForShare sets a shared mode lock on any rows that are read.
+func ({{ $receiver }} *{{ $builder }}) LockForShare() *{{ $builder }} {
+	{{ $receiver }}.withLock = LockForShare
+	return {{ $receiver }}
+}
 
 func ({{ $receiver }} *{{ $builder }}) sqlAll(ctx context.Context) ([]*{{ $.Name }}, error) {
 	var (
@@ -106,6 +119,7 @@ func ({{ $receiver }} *{{ $builder }}) querySpec() *sqlgraph.QuerySpec {
 		},
 		From: {{ $receiver }}.sql,
 		Unique: unique,
+		WithLock: {{ $receiver }}.withLock,
 	}
 	if fields := {{ $receiver }}.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
