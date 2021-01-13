@@ -28,6 +28,7 @@ type FieldTypeQuery struct {
 	fields     []string
 	predicates []predicate.FieldType
 	withFKs    bool
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -305,6 +306,11 @@ func (ftq *FieldTypeQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (ftq *FieldTypeQuery) Unique(unique bool) *FieldTypeQuery {
+	ftq.unique = &unique
+	return ftq
+}
+
 func (ftq *FieldTypeQuery) sqlAll(ctx context.Context) ([]*FieldType, error) {
 	var (
 		nodes   = []*FieldType{}
@@ -349,6 +355,10 @@ func (ftq *FieldTypeQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (ftq *FieldTypeQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   fieldtype.Table,
@@ -359,7 +369,7 @@ func (ftq *FieldTypeQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   ftq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := ftq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

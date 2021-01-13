@@ -33,6 +33,7 @@ type GroupQuery struct {
 	withUsers *UserQuery
 	withAdmin *UserQuery
 	withFKs   bool
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -378,6 +379,11 @@ func (gq *GroupQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (gq *GroupQuery) Unique(unique bool) *GroupQuery {
+	gq.unique = &unique
+	return gq
+}
+
 func (gq *GroupQuery) sqlAll(ctx context.Context) ([]*Group, error) {
 	var (
 		nodes       = []*Group{}
@@ -520,6 +526,10 @@ func (gq *GroupQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (gq *GroupQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   group.Table,
@@ -530,7 +540,7 @@ func (gq *GroupQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   gq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := gq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

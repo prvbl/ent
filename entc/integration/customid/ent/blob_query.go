@@ -33,6 +33,7 @@ type BlobQuery struct {
 	withParent *BlobQuery
 	withLinks  *BlobQuery
 	withFKs    bool
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -378,6 +379,11 @@ func (bq *BlobQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (bq *BlobQuery) Unique(unique bool) *BlobQuery {
+	bq.unique = &unique
+	return bq
+}
+
 func (bq *BlobQuery) sqlAll(ctx context.Context) ([]*Blob, error) {
 	var (
 		nodes       = []*Blob{}
@@ -520,6 +526,10 @@ func (bq *BlobQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (bq *BlobQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   blob.Table,
@@ -530,7 +540,7 @@ func (bq *BlobQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   bq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := bq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

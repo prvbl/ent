@@ -31,6 +31,7 @@ type CarQuery struct {
 	// eager-loading edges.
 	withOwner *UserQuery
 	withFKs   bool
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -318,6 +319,11 @@ func (cq *CarQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (cq *CarQuery) Unique(unique bool) *CarQuery {
+	cq.unique = &unique
+	return cq
+}
+
 func (cq *CarQuery) sqlAll(ctx context.Context) ([]*Car, error) {
 	var (
 		nodes       = []*Car{}
@@ -395,6 +401,10 @@ func (cq *CarQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (cq *CarQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   car.Table,
@@ -405,7 +415,7 @@ func (cq *CarQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   cq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := cq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

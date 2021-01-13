@@ -27,6 +27,7 @@ type ItemQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.Item
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -280,6 +281,11 @@ func (iq *ItemQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (iq *ItemQuery) Unique(unique bool) *ItemQuery {
+	iq.unique = &unique
+	return iq
+}
+
 func (iq *ItemQuery) sqlAll(ctx context.Context) ([]*Item, error) {
 	var (
 		nodes = []*Item{}
@@ -320,6 +326,10 @@ func (iq *ItemQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (iq *ItemQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   item.Table,
@@ -330,7 +340,7 @@ func (iq *ItemQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   iq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := iq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
