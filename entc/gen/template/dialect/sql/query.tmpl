@@ -97,8 +97,8 @@ func ({{ $receiver }} *{{ $builder }}) sqlExist(ctx context.Context) (bool, erro
 
 func ({{ $receiver }} *{{ $builder }}) querySpec() *sqlgraph.QuerySpec {
 	unique := {{ $.IsUnique }}
-	if cq.unique != nil {
-		unique = *cq.unique
+	if {{ $receiver }}.unique != nil {
+		unique = *{{ $receiver }}.unique
 	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
