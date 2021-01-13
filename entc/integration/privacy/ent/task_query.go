@@ -34,6 +34,7 @@ type TaskQuery struct {
 	withTeams *TeamQuery
 	withOwner *UserQuery
 	withFKs   bool
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -385,6 +386,11 @@ func (tq *TaskQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (tq *TaskQuery) Unique(unique bool) *TaskQuery {
+	tq.unique = &unique
+	return tq
+}
+
 func (tq *TaskQuery) sqlAll(ctx context.Context) ([]*Task, error) {
 	var (
 		nodes       = []*Task{}
@@ -527,6 +533,10 @@ func (tq *TaskQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (tq *TaskQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   task.Table,
@@ -537,7 +547,7 @@ func (tq *TaskQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   tq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := tq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

@@ -33,6 +33,7 @@ type UserQuery struct {
 	// eager-loading edges.
 	withTeams *TeamQuery
 	withTasks *TaskQuery
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -384,6 +385,11 @@ func (uq *UserQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (uq *UserQuery) Unique(unique bool) *UserQuery {
+	uq.unique = &unique
+	return uq
+}
+
 func (uq *UserQuery) sqlAll(ctx context.Context) ([]*User, error) {
 	var (
 		nodes       = []*User{}
@@ -523,6 +529,10 @@ func (uq *UserQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (uq *UserQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   user.Table,
@@ -533,7 +543,7 @@ func (uq *UserQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   uq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := uq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

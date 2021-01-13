@@ -33,6 +33,7 @@ type PetQuery struct {
 	withFriends *PetQuery
 	withOwner   *UserQuery
 	withFKs     bool
+	unique      *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -378,6 +379,11 @@ func (pq *PetQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (pq *PetQuery) Unique(unique bool) *PetQuery {
+	pq.unique = &unique
+	return pq
+}
+
 func (pq *PetQuery) sqlAll(ctx context.Context) ([]*Pet, error) {
 	var (
 		nodes       = []*Pet{}
@@ -520,6 +526,10 @@ func (pq *PetQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (pq *PetQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   pet.Table,
@@ -530,7 +540,7 @@ func (pq *PetQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   pq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := pq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

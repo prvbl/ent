@@ -31,6 +31,7 @@ type GroupInfoQuery struct {
 	predicates []predicate.GroupInfo
 	// eager-loading edges.
 	withGroups *GroupQuery
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -342,6 +343,11 @@ func (giq *GroupInfoQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (giq *GroupInfoQuery) Unique(unique bool) *GroupInfoQuery {
+	giq.unique = &unique
+	return giq
+}
+
 func (giq *GroupInfoQuery) sqlAll(ctx context.Context) ([]*GroupInfo, error) {
 	var (
 		nodes       = []*GroupInfo{}
@@ -416,6 +422,10 @@ func (giq *GroupInfoQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (giq *GroupInfoQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   groupinfo.Table,
@@ -426,7 +436,7 @@ func (giq *GroupInfoQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   giq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := giq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

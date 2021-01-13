@@ -27,6 +27,7 @@ type MediaQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.Media
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -304,6 +305,11 @@ func (mq *MediaQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+func (mq *MediaQuery) Unique(unique bool) *MediaQuery {
+	mq.unique = &unique
+	return mq
+}
+
 func (mq *MediaQuery) sqlAll(ctx context.Context) ([]*Media, error) {
 	var (
 		nodes = []*Media{}
@@ -344,6 +350,10 @@ func (mq *MediaQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (mq *MediaQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   media.Table,
@@ -354,7 +364,7 @@ func (mq *MediaQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   mq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := mq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

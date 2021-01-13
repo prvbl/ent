@@ -9,12 +9,18 @@ in the LICENSE file in the root directory of this source tree.
 	{{- with $.ForeignKeys }}
 		withFKs bool
 	{{- end }}
+	unique *bool
 {{- end }}
 
 {{ define "dialect/sql/query" }}
 {{ $pkg := $.Scope.Package }}
 {{ $builder := pascal $.Scope.Builder }}
 {{ $receiver := receiver $builder }}
+
+func ({{ $receiver }} *{{ $builder }}) Unique(unique bool) *{{ $builder }} {
+	{{ $receiver }}.unique = &unique
+	return {{ $receiver }}
+}
 
 func ({{ $receiver }} *{{ $builder }}) sqlAll(ctx context.Context) ([]*{{ $.Name }}, error) {
 	var (
@@ -90,6 +96,10 @@ func ({{ $receiver }} *{{ $builder }}) sqlExist(ctx context.Context) (bool, erro
 }
 
 func ({{ $receiver }} *{{ $builder }}) querySpec() *sqlgraph.QuerySpec {
+	unique := {{ $.IsUnique }}
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table: {{ $.Package }}.Table,
@@ -100,7 +110,7 @@ func ({{ $receiver }} *{{ $builder }}) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From: {{ $receiver }}.sql,
-		Unique: {{ $.IsUnique }},
+		Unique: unique,
 	}
 	if fields := {{ $receiver }}.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
