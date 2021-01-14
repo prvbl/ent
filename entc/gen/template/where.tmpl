@@ -93,6 +93,29 @@ func ID(id {{ $.ID.Type }}) predicate.{{ $.Name }} {
 {{ end }}
 
 {{ range $e := $.Edges }}
+	{{ if $e.OwnFK }}
+		// {{ $e.StructField }}ID applies the EQ predicate on the {{ $e.ColumnConstant }} field.
+		func {{ $e.StructField }}ID(id {{ $e.Type.ID.Type }}) predicate.{{ $.Name }} {
+			return predicate.{{ $.Name }}(func(s *sql.Selector) {
+				s.Where(sql.EQ(s.C({{ $e.ColumnConstant }}), id))
+			})
+		}
+
+		{{ range $op := ops $e.Type.ID }}
+			{{ $arg := "id" }}{{ if $op.Variadic }}{{ $arg = "ids" }}{{ end }}
+			{{ $func := printf "%sID%s" $e.StructField $op.Name }}
+			// {{ $func }} applies the {{ $op.Name }} predicate on the {{ $e.StructFKField }} field.
+			func {{ $func }}({{ $arg }} {{ if $op.Variadic }}...{{ end }}{{ $e.Type.ID.Type }}) predicate.{{ $.Name }} {
+				return predicate.{{ $.Name }}(
+					{{- with extend $ "Arg" $arg "Edge" $e "Op" $op "Storage" $.Storage -}}
+						{{ $tmpl := printf "dialect/%s/predicate/edge/ops" $.Storage }}
+						{{- xtemplate $tmpl . }}
+					{{- end -}}
+				)
+			}
+		{{ end }}
+	{{ end }}
+
 	{{ $func := print "Has" $e.StructField }}
 	// {{ $func }} applies the HasEdge predicate on the {{ quote $e.Name }} edge.
 	func {{ $func }}() predicate.{{ $.Name }} {
