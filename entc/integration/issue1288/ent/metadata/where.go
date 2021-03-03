@@ -178,6 +178,89 @@ func AgeLTE(v int) predicate.Metadata {
 	})
 }
 
+// UserID applies the EQ predicate on the UserColumn field.
+func UserID(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.EQ(s.C(UserColumn), id))
+	})
+}
+
+// UserIDEQ applies the EQ predicate on the ID field.
+func UserIDEQ(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.EQ(s.C(UserColumn), id))
+	})
+}
+
+// UserIDNEQ applies the NEQ predicate on the ID field.
+func UserIDNEQ(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.NEQ(s.C(UserColumn), id))
+	})
+}
+
+// UserIDIn applies the In predicate on the ID field.
+func UserIDIn(ids ...int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		// if not arguments were provided, append the FALSE constants,
+		// since we can't apply "IN ()". This will make this predicate falsy.
+		if len(ids) == 0 {
+			s.Where(sql.False())
+			return
+		}
+		v := make([]interface{}, len(ids))
+		for i := range v {
+			v[i] = ids[i]
+		}
+		s.Where(sql.In(s.C(UserColumn), v...))
+	})
+}
+
+// UserIDNotIn applies the NotIn predicate on the ID field.
+func UserIDNotIn(ids ...int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		// if not arguments were provided, append the FALSE constants,
+		// since we can't apply "IN ()". This will make this predicate falsy.
+		if len(ids) == 0 {
+			s.Where(sql.False())
+			return
+		}
+		v := make([]interface{}, len(ids))
+		for i := range v {
+			v[i] = ids[i]
+		}
+		s.Where(sql.NotIn(s.C(UserColumn), v...))
+	})
+}
+
+// UserIDGT applies the GT predicate on the ID field.
+func UserIDGT(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.GT(s.C(UserColumn), id))
+	})
+}
+
+// UserIDGTE applies the GTE predicate on the ID field.
+func UserIDGTE(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.GTE(s.C(UserColumn), id))
+	})
+}
+
+// UserIDLT applies the LT predicate on the ID field.
+func UserIDLT(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.LT(s.C(UserColumn), id))
+	})
+}
+
+// UserIDLTE applies the LTE predicate on the ID field.
+func UserIDLTE(id int) predicate.Metadata {
+	return predicate.Metadata(func(s *sql.Selector) {
+		s.Where(sql.LTE(s.C(UserColumn), id))
+	})
+}
+
 // HasUser applies the HasEdge predicate on the "user" edge.
 func HasUser() predicate.Metadata {
 	return predicate.Metadata(func(s *sql.Selector) {

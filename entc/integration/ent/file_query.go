@@ -36,6 +36,7 @@ type FileQuery struct {
 	withType  *FileTypeQuery
 	withField *FieldTypeQuery
 	withFKs   bool
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -550,6 +551,10 @@ func (fq *FileQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (fq *FileQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if fq.unique != nil {
+		unique = *fq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   file.Table,
@@ -560,7 +565,7 @@ func (fq *FileQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   fq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := fq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

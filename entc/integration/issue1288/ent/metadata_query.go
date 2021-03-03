@@ -30,6 +30,7 @@ type MetadataQuery struct {
 	predicates []predicate.Metadata
 	// eager-loading edges.
 	withUser *UserQuery
+	unique   *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -410,6 +411,10 @@ func (mq *MetadataQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (mq *MetadataQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if mq.unique != nil {
+		unique = *mq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   metadata.Table,
@@ -420,7 +425,7 @@ func (mq *MetadataQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   mq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := mq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

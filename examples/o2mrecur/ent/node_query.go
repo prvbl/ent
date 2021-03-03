@@ -32,6 +32,7 @@ type NodeQuery struct {
 	withParent   *NodeQuery
 	withChildren *NodeQuery
 	withFKs      bool
+	unique       *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -485,6 +486,10 @@ func (nq *NodeQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (nq *NodeQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if nq.unique != nil {
+		unique = *nq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   node.Table,
@@ -495,7 +500,7 @@ func (nq *NodeQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   nq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := nq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

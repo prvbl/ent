@@ -31,6 +31,7 @@ type UserQuery struct {
 	// eager-loading edges.
 	withFollowers *UserQuery
 	withFollowing *UserQuery
+	unique        *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -550,6 +551,10 @@ func (uq *UserQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (uq *UserQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if uq.unique != nil {
+		unique = *uq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   user.Table,
@@ -560,7 +565,7 @@ func (uq *UserQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   uq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := uq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

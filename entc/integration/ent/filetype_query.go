@@ -31,6 +31,7 @@ type FileTypeQuery struct {
 	predicates []predicate.FileType
 	// eager-loading edges.
 	withFiles *FileQuery
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -416,6 +417,10 @@ func (ftq *FileTypeQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (ftq *FileTypeQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if ftq.unique != nil {
+		unique = *ftq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   filetype.Table,
@@ -426,7 +431,7 @@ func (ftq *FileTypeQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   ftq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := ftq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

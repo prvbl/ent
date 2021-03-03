@@ -31,6 +31,7 @@ type CityQuery struct {
 	predicates []predicate.City
 	// eager-loading edges.
 	withStreets *StreetQuery
+	unique      *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -416,6 +417,10 @@ func (cq *CityQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (cq *CityQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   city.Table,
@@ -426,7 +431,7 @@ func (cq *CityQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   cq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := cq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

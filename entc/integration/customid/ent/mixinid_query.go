@@ -28,6 +28,7 @@ type MixinIDQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.MixinID
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -345,6 +346,10 @@ func (miq *MixinIDQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (miq *MixinIDQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if miq.unique != nil {
+		unique = *miq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   mixinid.Table,
@@ -355,7 +360,7 @@ func (miq *MixinIDQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   miq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := miq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
