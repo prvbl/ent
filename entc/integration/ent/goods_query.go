@@ -27,6 +27,7 @@ type GoodsQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.Goods
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -320,6 +321,10 @@ func (gq *GoodsQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (gq *GoodsQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if gq.unique != nil {
+		unique = *gq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   goods.Table,
@@ -330,7 +335,7 @@ func (gq *GoodsQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   gq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := gq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

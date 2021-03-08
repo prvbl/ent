@@ -30,6 +30,7 @@ type PetQuery struct {
 	predicates []predicate.Pet
 	// eager-loading edges.
 	withOwner *UserQuery
+	unique    *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -410,6 +411,10 @@ func (pq *PetQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (pq *PetQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if pq.unique != nil {
+		unique = *pq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   pet.Table,
@@ -420,7 +425,7 @@ func (pq *PetQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   pq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := pq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

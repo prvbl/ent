@@ -27,6 +27,7 @@ type CustomTypeQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.CustomType
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -344,6 +345,10 @@ func (ctq *CustomTypeQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (ctq *CustomTypeQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if ctq.unique != nil {
+		unique = *ctq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   customtype.Table,
@@ -354,7 +359,7 @@ func (ctq *CustomTypeQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   ctq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := ctq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

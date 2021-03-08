@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/facebook/ent/dialect/sql"
-	"github.com/facebook/ent/entc/integration/prefix/ent/entuser"
+	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/entc/integration/prefix/ent/entuser"
 )
 
 // User is the model entity for the User schema.
@@ -70,6 +70,11 @@ func (u *User) Unwrap() *User {
 	}
 	u.config.driver = tx.drv
 	return u
+}
+
+// TableName returns the table name of the User in the database.
+func (u *User) TableName() string {
+	return entuser.Table
 }
 
 // String implements the fmt.Stringer.

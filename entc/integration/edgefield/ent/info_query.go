@@ -30,6 +30,7 @@ type InfoQuery struct {
 	predicates []predicate.Info
 	// eager-loading edges.
 	withUser *UserQuery
+	unique   *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -410,6 +411,10 @@ func (iq *InfoQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (iq *InfoQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if iq.unique != nil {
+		unique = *iq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   info.Table,
@@ -420,7 +425,7 @@ func (iq *InfoQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   iq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := iq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

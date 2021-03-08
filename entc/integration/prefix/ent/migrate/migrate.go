@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/facebook/ent/dialect"
-	"github.com/facebook/ent/dialect/sql/schema"
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql/schema"
 )
 
 var (
@@ -52,7 +52,7 @@ func NewSchema(drv dialect.Driver) *Schema { return &Schema{drv: drv} }
 func (s *Schema) Create(ctx context.Context, opts ...schema.MigrateOption) error {
 	migrate, err := schema.NewMigrate(s.drv, opts...)
 	if err != nil {
-		return fmt.Errorf("ent/migrate: %v", err)
+		return fmt.Errorf("ent/migrate: %w", err)
 	}
 	return migrate.Create(ctx, Tables...)
 }
@@ -70,7 +70,7 @@ func (s *Schema) WriteTo(ctx context.Context, w io.Writer, opts ...schema.Migrat
 	}
 	migrate, err := schema.NewMigrate(drv, opts...)
 	if err != nil {
-		return fmt.Errorf("ent/migrate: %v", err)
+		return fmt.Errorf("ent/migrate: %w", err)
 	}
 	return migrate.Create(ctx, Tables...)
 }

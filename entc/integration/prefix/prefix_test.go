@@ -6,11 +6,11 @@ package template
 
 import (
 	"context"
-	"github.com/facebook/ent/dialect"
+	"entgo.io/ent/dialect"
 	"testing"
 
-	"github.com/facebook/ent/entc/integration/prefix/ent/enttest"
-	"github.com/facebook/ent/entc/integration/prefix/ent/entuser"
+	"entgo.io/ent/entc/integration/prefix/ent/enttest"
+	"entgo.io/ent/entc/integration/prefix/ent/entuser"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 )

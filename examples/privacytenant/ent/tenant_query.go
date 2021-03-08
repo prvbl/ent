@@ -27,6 +27,7 @@ type TenantQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.Tenant
+	unique     *bool
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -350,6 +351,10 @@ func (tq *TenantQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (tq *TenantQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if tq.unique != nil {
+		unique = *tq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   tenant.Table,
@@ -360,7 +365,7 @@ func (tq *TenantQuery) querySpec() *sqlgraph.QuerySpec {
 			},
 		},
 		From:   tq.sql,
-		Unique: true,
+		Unique: unique,
 	}
 	if fields := tq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
