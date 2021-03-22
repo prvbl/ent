@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 
+	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/examples/edgeindex/ent/city"
@@ -31,6 +32,8 @@ type StreetQuery struct {
 	// eager-loading edges.
 	withCity *CityQuery
 	withFKs  bool
+	unique   *bool
+	withLock ent.LockType
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -342,6 +345,18 @@ func (sq *StreetQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+// LockForUpdate locks any rows read as if you issued an update for those rows.
+func (sq *StreetQuery) LockForUpdate() *StreetQuery {
+	sq.withLock = LockForUpdate
+	return sq
+}
+
+// LockForShare sets a shared mode lock on any rows that are read.
+func (sq *StreetQuery) LockForShare() *StreetQuery {
+	sq.withLock = LockForShare
+	return sq
+}
+
 func (sq *StreetQuery) sqlAll(ctx context.Context) ([]*Street, error) {
 	var (
 		nodes       = []*Street{}
@@ -423,6 +438,10 @@ func (sq *StreetQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (sq *StreetQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if sq.unique != nil {
+		unique = *sq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   street.Table,
@@ -432,8 +451,9 @@ func (sq *StreetQuery) querySpec() *sqlgraph.QuerySpec {
 				Column: street.FieldID,
 			},
 		},
-		From:   sq.sql,
-		Unique: true,
+		From:     sq.sql,
+		Unique:   unique,
+		WithLock: sq.withLock,
 	}
 	if fields := sq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

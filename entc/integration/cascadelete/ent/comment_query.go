@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 
+	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/entc/integration/cascadelete/ent/comment"
@@ -30,6 +31,8 @@ type CommentQuery struct {
 	predicates []predicate.Comment
 	// eager-loading edges.
 	withPost *PostQuery
+	unique   *bool
+	withLock ent.LockType
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -341,6 +344,18 @@ func (cq *CommentQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+// LockForUpdate locks any rows read as if you issued an update for those rows.
+func (cq *CommentQuery) LockForUpdate() *CommentQuery {
+	cq.withLock = LockForUpdate
+	return cq
+}
+
+// LockForShare sets a shared mode lock on any rows that are read.
+func (cq *CommentQuery) LockForShare() *CommentQuery {
+	cq.withLock = LockForShare
+	return cq
+}
+
 func (cq *CommentQuery) sqlAll(ctx context.Context) ([]*Comment, error) {
 	var (
 		nodes       = []*Comment{}
@@ -412,6 +427,10 @@ func (cq *CommentQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (cq *CommentQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   comment.Table,
@@ -421,8 +440,9 @@ func (cq *CommentQuery) querySpec() *sqlgraph.QuerySpec {
 				Column: comment.FieldID,
 			},
 		},
-		From:   cq.sql,
-		Unique: true,
+		From:     cq.sql,
+		Unique:   unique,
+		WithLock: cq.withLock,
 	}
 	if fields := cq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

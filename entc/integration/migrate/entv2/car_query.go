@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 
+	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/entc/integration/migrate/entv2/car"
@@ -31,6 +32,8 @@ type CarQuery struct {
 	// eager-loading edges.
 	withOwner *UserQuery
 	withFKs   bool
+	unique    *bool
+	withLock  ent.LockType
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -318,6 +321,18 @@ func (cq *CarQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+// LockForUpdate locks any rows read as if you issued an update for those rows.
+func (cq *CarQuery) LockForUpdate() *CarQuery {
+	cq.withLock = LockForUpdate
+	return cq
+}
+
+// LockForShare sets a shared mode lock on any rows that are read.
+func (cq *CarQuery) LockForShare() *CarQuery {
+	cq.withLock = LockForShare
+	return cq
+}
+
 func (cq *CarQuery) sqlAll(ctx context.Context) ([]*Car, error) {
 	var (
 		nodes       = []*Car{}
@@ -399,6 +414,10 @@ func (cq *CarQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (cq *CarQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   car.Table,
@@ -408,8 +427,9 @@ func (cq *CarQuery) querySpec() *sqlgraph.QuerySpec {
 				Column: car.FieldID,
 			},
 		},
-		From:   cq.sql,
-		Unique: true,
+		From:     cq.sql,
+		Unique:   unique,
+		WithLock: cq.withLock,
 	}
 	if fields := cq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 
+	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/entc/integration/migrate/entv2/conversion"
@@ -27,6 +28,8 @@ type ConversionQuery struct {
 	order      []OrderFunc
 	fields     []string
 	predicates []predicate.Conversion
+	unique     *bool
+	withLock   ent.LockType
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -304,6 +307,18 @@ func (cq *ConversionQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+// LockForUpdate locks any rows read as if you issued an update for those rows.
+func (cq *ConversionQuery) LockForUpdate() *ConversionQuery {
+	cq.withLock = LockForUpdate
+	return cq
+}
+
+// LockForShare sets a shared mode lock on any rows that are read.
+func (cq *ConversionQuery) LockForShare() *ConversionQuery {
+	cq.withLock = LockForShare
+	return cq
+}
+
 func (cq *ConversionQuery) sqlAll(ctx context.Context) ([]*Conversion, error) {
 	var (
 		nodes = []*Conversion{}
@@ -344,6 +359,10 @@ func (cq *ConversionQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (cq *ConversionQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if cq.unique != nil {
+		unique = *cq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   conversion.Table,
@@ -353,8 +372,9 @@ func (cq *ConversionQuery) querySpec() *sqlgraph.QuerySpec {
 				Column: conversion.FieldID,
 			},
 		},
-		From:   cq.sql,
-		Unique: true,
+		From:     cq.sql,
+		Unique:   unique,
+		WithLock: cq.withLock,
 	}
 	if fields := cq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))

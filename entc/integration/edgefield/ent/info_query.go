@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 
+	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/entc/integration/edgefield/ent/info"
@@ -30,6 +31,8 @@ type InfoQuery struct {
 	predicates []predicate.Info
 	// eager-loading edges.
 	withUser *UserQuery
+	unique   *bool
+	withLock ent.LockType
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
@@ -341,6 +344,18 @@ func (iq *InfoQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
+// LockForUpdate locks any rows read as if you issued an update for those rows.
+func (iq *InfoQuery) LockForUpdate() *InfoQuery {
+	iq.withLock = LockForUpdate
+	return iq
+}
+
+// LockForShare sets a shared mode lock on any rows that are read.
+func (iq *InfoQuery) LockForShare() *InfoQuery {
+	iq.withLock = LockForShare
+	return iq
+}
+
 func (iq *InfoQuery) sqlAll(ctx context.Context) ([]*Info, error) {
 	var (
 		nodes       = []*Info{}
@@ -412,6 +427,10 @@ func (iq *InfoQuery) sqlExist(ctx context.Context) (bool, error) {
 }
 
 func (iq *InfoQuery) querySpec() *sqlgraph.QuerySpec {
+	unique := true
+	if iq.unique != nil {
+		unique = *iq.unique
+	}
 	_spec := &sqlgraph.QuerySpec{
 		Node: &sqlgraph.NodeSpec{
 			Table:   info.Table,
@@ -421,8 +440,9 @@ func (iq *InfoQuery) querySpec() *sqlgraph.QuerySpec {
 				Column: info.FieldID,
 			},
 		},
-		From:   iq.sql,
-		Unique: true,
+		From:     iq.sql,
+		Unique:   unique,
+		WithLock: iq.withLock,
 	}
 	if fields := iq.fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
