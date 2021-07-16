@@ -90,8 +90,11 @@ type TypeInfo struct {
 	RType    *RType
 }
 
-// String returns the string representation of a type.
 func (t TypeInfo) String() string {
+	if t.RType != nil && t.RType.String() != "" {
+		return t.RType.String()
+	}
+
 	switch {
 	case t.Ident != "":
 		return t.Ident
