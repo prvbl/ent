@@ -17,7 +17,7 @@ import (
 	"text/template"
 	"unicode"
 
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent/schema/field"
 
 	"github.com/go-openapi/inflect"
 )
@@ -26,7 +26,7 @@ var (
 	// Funcs are the predefined template
 	// functions used by the codegen.
 	Funcs = template.FuncMap{
-		"ops":           ops,
+		"ops":           fieldOps,
 		"add":           add,
 		"append":        reflect.Append,
 		"appends":       reflect.AppendSlice,
@@ -41,12 +41,16 @@ var (
 		"aggregate":     aggregate,
 		"primitives":    primitives,
 		"singular":      rules.Singularize,
-		"quote":         strconv.Quote,
+		"quote":         quote,
 		"base":          filepath.Base,
 		"keys":          keys,
+		"indexOf":       indexOf,
 		"join":          join,
+		"joinWords":     joinWords,
+		"isNil":         isNil,
 		"lower":         strings.ToLower,
 		"upper":         strings.ToUpper,
+		"trim":          strings.Trim,
 		"hasField":      hasField,
 		"hasImport":     hasImport,
 		"indirect":      indirect,
@@ -64,7 +68,8 @@ var (
 		"set":           set,
 		"unset":         unset,
 		"hasKey":        hasKey,
-		"list":          list,
+		"list":          list[any],
+		"slist":         list[string],
 		"fail":          fail,
 		"replace":       strings.ReplaceAll,
 	}
@@ -72,24 +77,65 @@ var (
 	acronyms = make(map[string]struct{})
 )
 
-// ops returns all operations for given field.
-func ops(f *Field) (op []Op) {
+// joinWords with spaces and add linebreaks to ensure lines do not exceed the given maxSize.
+func joinWords(words []string, maxSize int) string {
+	if len(words) == 0 {
+		return ""
+	}
+	b := &strings.Builder{}
+	b.WriteString(words[0])
+	n := len(words[0])
+	for _, w := range words[1:] {
+		if n+len(w)+1 > maxSize {
+			b.WriteByte('\n')
+			n = 0
+		}
+		b.WriteString(" ")
+		b.WriteString(w)
+		n += len(w) + 1
+	}
+	return b.String()
+}
+
+// indexOf returns the index of the given string in the slice.
+func indexOf(s []string, v string) int {
+	for i, x := range s {
+		if x == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// quote only strings.
+func quote(v any) any {
+	if s, ok := v.(string); ok {
+		return strconv.Quote(s)
+	}
+	return v
+}
+
+// fieldOps returns all predicate operations for a given field.
+func fieldOps(f *Field) (ops []Op) {
 	switch t := f.Type.Type; {
-	case f.HasGoType() && !f.ConvertedToBasic():
+	case f.HasGoType() && !f.ConvertedToBasic() && !f.Type.Valuer():
 	case t == field.TypeJSON:
 	case t == field.TypeBool:
-		op = boolOps
+		ops = boolOps
 	case t == field.TypeString && strings.ToLower(f.Name) != "id":
-		op = stringOps
-	case t == field.TypeEnum:
-		op = enumOps
+		ops = stringOps
+		if f.HasGoType() && !f.ConvertedToBasic() && (f.Type.Valuer() || f.HasValueScanner()) {
+			ops = numericOps
+		}
+	case t == field.TypeEnum || f.IsEdgeField():
+		ops = enumOps
 	default:
-		op = numericOps
+		ops = numericOps
 	}
 	if f.Optional {
-		op = append(op, nillableOps...)
+		ops = append(ops, nillableOps...)
 	}
-	return op
+	return ops
 }
 
 // xrange generates a slice of len n.
@@ -110,7 +156,7 @@ func plural(name string) string {
 }
 
 func isSeparator(r rune) bool {
-	return r == '_' || r == '-'
+	return r == '_' || r == '-' || unicode.IsSpace(r)
 }
 
 func pascalWords(words []string) string {
@@ -131,7 +177,6 @@ func pascalWords(words []string) string {
 //	full_name 	=> FullName
 //	user_id   	=> UserID
 //	full-admin	=> FullAdmin
-//
 func pascal(s string) string {
 	words := strings.FieldsFunc(s, isSeparator)
 	return pascalWords(words)
@@ -143,7 +188,6 @@ func pascal(s string) string {
 //	full_name  => fullName
 //	user_id    => userID
 //	full-admin => fullAdmin
-//
 func camel(s string) string {
 	words := strings.FieldsFunc(s, isSeparator)
 	if len(words) == 1 {
@@ -157,7 +201,6 @@ func camel(s string) string {
 //	Username => username
 //	FullName => full_name
 //	HTTPCode => http_code
-//
 func snake(s string) string {
 	var (
 		j int
@@ -186,7 +229,6 @@ func snake(s string) string {
 //	[1]T      => t
 //	User      => u
 //	UserQuery => uq
-//
 func receiver(s string) (r string) {
 	// Trim invalid tokens for identifier prefix.
 	s = strings.Trim(s, "[]*&0123456789")
@@ -217,13 +259,13 @@ func receiver(s string) (r string) {
 // typeScope wraps the Type object with extended scope.
 type typeScope struct {
 	*Type
-	Scope map[interface{}]interface{}
+	Scope map[any]any
 }
 
 // graphScope wraps the Graph object with extended scope.
 type graphScope struct {
 	*Graph
-	Scope map[interface{}]interface{}
+	Scope map[any]any
 }
 
 // extend extends the parent block with a KV pairs.
@@ -231,12 +273,11 @@ type graphScope struct {
 //	{{ with $scope := extend $ "key" "value" }}
 //		{{ template "setters" $scope }}
 //	{{ end}}
-//
-func extend(v interface{}, kv ...interface{}) (interface{}, error) {
-	scope := make(map[interface{}]interface{})
+func extend(v any, kv ...any) (any, error) {
 	if len(kv)%2 != 0 {
 		return nil, fmt.Errorf("invalid number of parameters: %d", len(kv))
 	}
+	scope := make(map[any]any, len(kv)/2)
 	for i := 0; i < len(kv); i += 2 {
 		scope[kv[i]] = kv[i+1]
 	}
@@ -270,18 +311,24 @@ func add(xs ...int) (n int) {
 
 func ruleset() *inflect.Ruleset {
 	rules := inflect.NewDefaultRuleset()
-	// Add common initialisms from golint and more.
+	// Add common initialism from golint and more.
 	for _, w := range []string{
 		"ACL", "API", "ASCII", "AWS", "CPU", "CSS", "DNS", "EOF", "GB", "GUID",
-		"HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "KB", "LHS", "MAC", "MB",
-		"QPS", "RAM", "RHS", "RPC", "SLA", "SMTP", "SQL", "SSH", "SSO", "TCP",
-		"TLS", "TTL", "UDP", "UI", "UID", "URI", "URL", "UTF8", "UUID", "VM",
-		"XML", "XMPP", "XSRF", "XSS",
+		"HCL", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "KB", "LHS", "MAC",
+		"MB", "QPS", "RAM", "RHS", "RPC", "SLA", "SMTP", "SQL", "SSH", "SSO",
+		"TCP", "TLS", "TTL", "UDP", "UI", "UID", "URI", "URL", "UTF8", "UUID",
+		"VM", "XML", "XMPP", "XSRF", "XSS",
 	} {
 		acronyms[w] = struct{}{}
 		rules.AddAcronym(w)
 	}
 	return rules
+}
+
+// AddAcronym adds initialism to the global ruleset.
+func AddAcronym(word string) {
+	acronyms[word] = struct{}{}
+	rules.AddAcronym(word)
 }
 
 // order returns a map of sort orders.
@@ -306,6 +353,7 @@ func aggregate() map[string]bool {
 
 // keys returns the given map keys.
 func keys(v reflect.Value) ([]string, error) {
+	v = indirect(v)
 	if k := v.Type().Kind(); k != reflect.Map {
 		return nil, fmt.Errorf("expect map for keys, got: %s", k)
 	}
@@ -329,7 +377,7 @@ func join(a []string, sep string) string {
 }
 
 // xtemplate dynamically executes templates by their names.
-func xtemplate(name string, v interface{}) (string, error) {
+func xtemplate(name string, v any) (string, error) {
 	buf := bytes.NewBuffer(nil)
 	if err := templates.ExecuteTemplate(buf, name, v); err != nil {
 		return "", err
@@ -347,12 +395,22 @@ func hasTemplate(name string) bool {
 	return false
 }
 
-// matchTemplate returns all template names that match the given pattern.
-func matchTemplate(pattern string) []string {
-	var names []string
-	for _, t := range templates.Templates() {
-		if match, _ := filepath.Match(pattern, t.Name()); match {
-			names = append(names, t.Name())
+// matchTemplate returns all template names that match the given patterns.
+func matchTemplate(patterns ...string) []string {
+	var (
+		names  []string
+		exists = make(map[string]struct{})
+	)
+	for _, pattern := range patterns {
+		for _, t := range templates.Templates() {
+			name := t.Name()
+			if _, ok := exists[name]; ok {
+				continue
+			}
+			if match, _ := filepath.Match(pattern, name); match {
+				names = append(names, name)
+				exists[name] = struct{}{}
+			}
 		}
 	}
 	sort.Strings(names)
@@ -360,7 +418,7 @@ func matchTemplate(pattern string) []string {
 }
 
 // hasField determines if a struct has a field with the given name.
-func hasField(v interface{}, name string) bool {
+func hasField(v any, name string) bool {
 	vr := reflect.Indirect(reflect.ValueOf(v))
 	return vr.FieldByName(name).IsValid()
 }
@@ -374,6 +432,22 @@ func hasImport(name string) bool {
 // trimPackage trims the package name from the given identifier.
 func trimPackage(ident, pkg string) string {
 	return strings.TrimPrefix(ident, pkg+".")
+}
+
+// isNil reports whether its argument v is nil.
+func isNil(v any) bool {
+	rv := indirect(reflect.ValueOf(v))
+	if !rv.IsValid() {
+		return true
+	}
+	switch rv.Kind() {
+	case reflect.Invalid:
+		return true
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.UnsafePointer, reflect.Interface, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // indirect returns the item at the end of indirection.
@@ -390,7 +464,7 @@ func tagLookup(tag, key string) string {
 }
 
 // toString converts `v` to a string.
-func toString(v interface{}) string {
+func toString(v any) string {
 	switch v := v.(type) {
 	case string:
 		return v
@@ -406,9 +480,9 @@ func toString(v interface{}) string {
 }
 
 // dict creates a dictionary from a list of pairs.
-func dict(v ...interface{}) map[string]interface{} {
+func dict(v ...any) map[string]any {
 	lenv := len(v)
-	dict := make(map[string]interface{}, lenv/2)
+	dict := make(map[string]any, lenv/2)
 	for i := 0; i < lenv; i += 2 {
 		key := toString(v[i])
 		if i+1 >= lenv {
@@ -421,7 +495,7 @@ func dict(v ...interface{}) map[string]interface{} {
 }
 
 // get the value from the dict for key.
-func get(d map[string]interface{}, key string) interface{} {
+func get(d map[string]any, key string) any {
 	if val, ok := d[key]; ok {
 		return val
 	}
@@ -429,25 +503,25 @@ func get(d map[string]interface{}, key string) interface{} {
 }
 
 // set adds a value to the dict for key.
-func set(d map[string]interface{}, key string, value interface{}) map[string]interface{} {
+func set(d map[string]any, key string, value any) map[string]any {
 	d[key] = value
 	return d
 }
 
 // unset removes a key from the dict.
-func unset(d map[string]interface{}, key string) map[string]interface{} {
+func unset(d map[string]any, key string) map[string]any {
 	delete(d, key)
 	return d
 }
 
 // hasKey tests whether a key is found in dict.
-func hasKey(d map[string]interface{}, key string) bool {
+func hasKey(d map[string]any, key string) bool {
 	_, ok := d[key]
 	return ok
 }
 
 // list creates a list from values.
-func list(v ...interface{}) []interface{} {
+func list[T any](v ...T) []T {
 	return v
 }
 

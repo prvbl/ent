@@ -7,12 +7,11 @@ package rule
 import (
 	"context"
 
-	"github.com/facebook/ent/examples/privacytenant/ent"
-	"github.com/facebook/ent/examples/privacytenant/ent/predicate"
-	"github.com/facebook/ent/examples/privacytenant/ent/privacy"
-	"github.com/facebook/ent/examples/privacytenant/ent/tenant"
-	"github.com/facebook/ent/examples/privacytenant/ent/user"
-	"github.com/facebook/ent/examples/privacytenant/viewer"
+	"entgo.io/ent/entql"
+	"entgo.io/ent/examples/privacytenant/ent"
+	"entgo.io/ent/examples/privacytenant/ent/privacy"
+	"entgo.io/ent/examples/privacytenant/ent/user"
+	"entgo.io/ent/examples/privacytenant/viewer"
 )
 
 // DenyIfNoViewer is a rule that returns deny decision if the viewer is missing in the context.
@@ -39,32 +38,34 @@ func AllowIfAdmin() privacy.QueryMutationRule {
 	})
 }
 
-// FilterTenantRule is a query rule that filters out entities that are not in the tenant.
+// FilterTenantRule is a query/mutation rule that filters out entities that are not in the tenant.
 func FilterTenantRule() privacy.QueryMutationRule {
-	type TeamsFilter interface {
-		WhereHasTenantWith(...predicate.Tenant)
+	// TenantsFilter is an interface to wrap WhereTenantID()
+	// predicate that is used by both `Group` and `User` schemas.
+	type TenantsFilter interface {
+		WhereTenantID(entql.IntP)
 	}
 	return privacy.FilterFunc(func(ctx context.Context, f privacy.Filter) error {
 		view := viewer.FromContext(ctx)
-		if view.Tenant() == "" {
+		tid, ok := view.Tenant()
+		if !ok {
 			return privacy.Denyf("missing tenant information in viewer")
 		}
-		tf, ok := f.(TeamsFilter)
+		tf, ok := f.(TenantsFilter)
 		if !ok {
 			return privacy.Denyf("unexpected filter type %T", f)
 		}
-		// Make sure that a tenant is able to read only entities that
-		// has an edge to it.
-		tf.WhereHasTenantWith(tenant.Name(view.Tenant()))
+		// Make sure that a tenant reads only entities that have an edge to it.
+		tf.WhereTenantID(entql.IntEQ(tid))
 		// Skip to the next privacy rule (equivalent to return nil).
 		return privacy.Skip
 	})
 }
 
-// DenyMismatchedTenants is a rule that returns a deny decision if the operations
-// tries to add users to groups that are not in the same tenant.
+// DenyMismatchedTenants is a rule that runs only on create operations and returns a deny
+// decision if the operation tries to add users to groups that are not in the same tenant.
 func DenyMismatchedTenants() privacy.MutationRule {
-	rule := privacy.GroupMutationRuleFunc(func(ctx context.Context, m *ent.GroupMutation) error {
+	return privacy.GroupMutationRuleFunc(func(ctx context.Context, m *ent.GroupMutation) error {
 		tid, exists := m.TenantID()
 		if !exists {
 			return privacy.Denyf("missing tenant information in mutation")
@@ -74,18 +75,21 @@ func DenyMismatchedTenants() privacy.MutationRule {
 		if len(users) == 0 {
 			return privacy.Skip
 		}
-		// Query the tenant-id of all users. Expect to have exact 1 result,
-		// and it matches the tenant-id of the group above.
-		uid, err := m.Client().User.Query().Where(user.IDIn(users...)).QueryTenant().OnlyID(ctx)
+		// Query the tenant-ids of all attached users. Expect all users to be connected to the same tenant
+		// as the group. Note, we use privacy.DecisionContext to skip the FilterTenantRule defined above.
+		ids, err := m.Client().User.Query().Where(user.IDIn(users...)).Select(user.FieldTenantID).Ints(privacy.DecisionContext(ctx, privacy.Allow))
 		if err != nil {
-			return privacy.Denyf("querying the tenant-id %v", err)
+			return privacy.Denyf("querying the tenant-ids %v", err)
 		}
-		if uid != tid {
-			return privacy.Denyf("mismatch tenant-ids for group/users %d != %d", tid, uid)
+		if len(ids) != len(users) {
+			return privacy.Denyf("one the attached users is not connected to a tenant %v", err)
+		}
+		for _, id := range ids {
+			if id != tid {
+				return privacy.Denyf("mismatch tenant-ids for group/users %d != %d", tid, id)
+			}
 		}
 		// Skip to the next privacy rule (equivalent to return nil).
 		return privacy.Skip
 	})
-	// Evaluate the mutation rule only on group creation.
-	return privacy.OnMutationOperation(rule, ent.OpCreate)
 }

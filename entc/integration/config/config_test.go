@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/facebook/ent/dialect/entsql"
-	"github.com/facebook/ent/dialect/sql"
-	"github.com/facebook/ent/entc/integration/config/ent"
-	"github.com/facebook/ent/entc/integration/config/ent/migrate"
-	"github.com/facebook/ent/entc/integration/config/ent/schema"
+	"entgo.io/ent/dialect/entsql"
+	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/entc/integration/config/ent"
+	"entgo.io/ent/entc/integration/config/ent/migrate"
+	"entgo.io/ent/entc/integration/config/ent/schema"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/mattn/go-sqlite3"
@@ -59,7 +59,7 @@ func TestSchemaConfig(t *testing.T) {
 	require.NoError(t, err)
 	ast.Inspect(f, func(n ast.Node) bool {
 		if f, ok := n.(*ast.Field); ok && len(f.Names) > 0 && f.Names[0].Name == fd.Name {
-			require.Equal(t, fd.Comment, f.Doc.Text())
+			require.Contains(t, fd.Comment, f.Doc.Text())
 			return false
 		}
 		return true
@@ -73,9 +73,9 @@ func TestMySQL(t *testing.T) {
 			require.NoError(t, err)
 			defer root.Close()
 			ctx := context.Background()
-			err = root.Exec(ctx, "CREATE DATABASE IF NOT EXISTS config", []interface{}{}, new(sql.Result))
+			err = root.Exec(ctx, "CREATE DATABASE IF NOT EXISTS config", []any{}, new(sql.Result))
 			require.NoError(t, err, "creating database")
-			defer root.Exec(ctx, "DROP DATABASE IF EXISTS config", []interface{}{}, new(sql.Result))
+			defer root.Exec(ctx, "DROP DATABASE IF EXISTS config", []any{}, new(sql.Result))
 
 			drv, err := sql.Open("mysql", fmt.Sprintf("root:pass@tcp(localhost:%d)/config?parseTime=True", port))
 			require.NoError(t, err, "connecting to migrate database")

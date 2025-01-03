@@ -7,14 +7,16 @@ package field
 import (
 	"database/sql"
 	"database/sql/driver"
+	"encoding"
 	"errors"
 	"fmt"
 	"math"
 	"reflect"
 	"regexp"
+	"strings"
 	"time"
 
-	"github.com/facebook/ent/schema"
+	"entgo.io/ent/schema"
 )
 
 // String returns a new Field with type string.
@@ -26,7 +28,7 @@ func String(name string) *stringBuilder {
 }
 
 // Text returns a new string field without limitation on the size.
-// In MySQL, it is the "longtext" type, but in SQLite and Gremlin it has not effect.
+// In MySQL, it is the "longtext" type, but in SQLite and Gremlin it has no effect.
 func Text(name string) *stringBuilder {
 	return &stringBuilder{&Descriptor{
 		Name: name,
@@ -69,38 +71,63 @@ func Time(name string) *timeBuilder {
 //
 //	field.JSON("info", &Info{}).
 //		Optional()
-//
-func JSON(name string, typ interface{}) *jsonBuilder {
+func JSON(name string, typ any) *jsonBuilder {
+	b := &jsonBuilder{&Descriptor{
+		Name: name,
+		Info: &TypeInfo{
+			Type: TypeJSON,
+		},
+	}}
 	t := reflect.TypeOf(typ)
-	info := &TypeInfo{
-		Type:    TypeJSON,
-		Ident:   t.String(),
-		PkgPath: t.PkgPath(),
+	if t == nil {
+		b.desc.Err = errors.New("expect a Go value as JSON type but got nil")
+		return b
 	}
+	b.desc.Info.Ident = t.String()
+	b.desc.Info.PkgPath = t.PkgPath()
+	b.desc.goType(typ)
+	b.desc.checkGoType(t)
 	switch t.Kind() {
 	case reflect.Slice, reflect.Array, reflect.Ptr, reflect.Map:
-		info.Nillable = true
-		info.PkgPath = pkgPath(t)
+		b.desc.Info.Nillable = true
+		b.desc.Info.PkgPath = pkgPath(t)
 	}
-	return &jsonBuilder{&Descriptor{
-		Name: name,
-		Info: info,
-	}}
+	return b
 }
 
 // Strings returns a new JSON Field with type []string.
-func Strings(name string) *jsonBuilder {
-	return JSON(name, []string{})
+func Strings(name string) *sliceBuilder[string] {
+	return sb[string](name)
 }
 
 // Ints returns a new JSON Field with type []int.
-func Ints(name string) *jsonBuilder {
-	return JSON(name, []int{})
+func Ints(name string) *sliceBuilder[int] {
+	return sb[int](name)
 }
 
 // Floats returns a new JSON Field with type []float.
-func Floats(name string) *jsonBuilder {
-	return JSON(name, []float64{})
+func Floats(name string) *sliceBuilder[float64] {
+	return sb[float64](name)
+}
+
+// Any returns a new JSON Field with type any. Although this field type can be
+// useful for fields with dynamic data layout, it is strongly recommended to use
+// JSON with json.RawMessage instead and implement custom marshaling.
+func Any(name string) *jsonBuilder {
+	const t = "any"
+	return &jsonBuilder{&Descriptor{
+		Name: name,
+		Info: &TypeInfo{
+			Type:     TypeJSON,
+			Ident:    t,
+			Nillable: true,
+			RType: &RType{
+				Name:  t,
+				Ident: t,
+				Kind:  reflect.Interface,
+			},
+		},
+	}}
 }
 
 // Enum returns a new Field with type enum. An example for defining enum is as follows:
@@ -111,7 +138,6 @@ func Floats(name string) *jsonBuilder {
 //			"off",
 //		).
 //		Default("on")
-//
 func Enum(name string) *enumBuilder {
 	return &enumBuilder{&Descriptor{
 		Name: name,
@@ -122,18 +148,18 @@ func Enum(name string) *enumBuilder {
 // UUID returns a new Field with type UUID. An example for defining UUID field is as follows:
 //
 //	field.UUID("id", uuid.New())
-//
 func UUID(name string, typ driver.Valuer) *uuidBuilder {
 	rt := reflect.TypeOf(typ)
-	return &uuidBuilder{&Descriptor{
+	b := &uuidBuilder{&Descriptor{
 		Name: name,
 		Info: &TypeInfo{
-			Type:     TypeUUID,
-			Nillable: true,
-			Ident:    rt.String(),
-			PkgPath:  rt.PkgPath(),
+			Type:    TypeUUID,
+			Ident:   rt.String(),
+			PkgPath: indirect(rt).PkgPath(),
 		},
 	}}
+	b.desc.goType(typ)
+	return b
 }
 
 // Other represents a field that is not a good fit for any of the standard field types.
@@ -147,13 +173,12 @@ func UUID(name string, typ driver.Valuer) *uuidBuilder {
 //			dialect.MySQL:    "text",
 //			dialect.Postgres: "varchar",
 //		})
-//
-func Other(name string, typ ValueScanner) *otherBuilder {
+func Other(name string, typ driver.Valuer) *otherBuilder {
 	ob := &otherBuilder{&Descriptor{
 		Name: name,
 		Info: &TypeInfo{Type: TypeOther},
 	}}
-	ob.desc.goType(typ, valueScannerType)
+	ob.desc.goType(typ)
 	return ob
 }
 
@@ -233,8 +258,10 @@ func (b *stringBuilder) Default(s string) *stringBuilder {
 //
 //	field.String("cuid").
 //		DefaultFunc(cuid.New)
-//
-func (b *stringBuilder) DefaultFunc(fn interface{}) *stringBuilder {
+func (b *stringBuilder) DefaultFunc(fn any) *stringBuilder {
+	if t := reflect.TypeOf(fn); t.Kind() != reflect.Func {
+		b.desc.Err = fmt.Errorf("field.String(%q).DefaultFunc expects func but got %s", b.desc.Name, t.Kind())
+	}
 	b.desc.Default = fn
 	return b
 }
@@ -286,19 +313,29 @@ func (b *stringBuilder) StorageKey(key string) *stringBuilder {
 //			dialect.MySQL:    "text",
 //			dialect.Postgres: "varchar",
 //		})
-//
 func (b *stringBuilder) SchemaType(types map[string]string) *stringBuilder {
 	b.desc.SchemaType = types
 	return b
 }
 
 // GoType overrides the default Go type with a custom one.
+// If the provided type implements the Validator interface
+// and no validators have been set, the type validator will
+// be used.
 //
 //	field.String("dir").
 //		GoType(http.Dir("dir"))
-//
-func (b *stringBuilder) GoType(typ interface{}) *stringBuilder {
-	b.desc.goType(typ, stringType)
+func (b *stringBuilder) GoType(typ any) *stringBuilder {
+	b.desc.goType(typ)
+	return b
+}
+
+// ValueScanner provides an external value scanner for the given GoType.
+// Using this option allow users to use field types that do not implement
+// the sql.Scanner and driver.Valuer interfaces, such as slices and maps
+// or types exist in external packages (e.g., url.URL).
+func (b *stringBuilder) ValueScanner(vs any) *stringBuilder {
+	b.desc.ValueScanner = vs
 	return b
 }
 
@@ -309,9 +346,19 @@ func (b *stringBuilder) GoType(typ interface{}) *stringBuilder {
 //		Annotations(
 //			entgql.OrderField("DIR"),
 //		)
-//
 func (b *stringBuilder) Annotations(annotations ...schema.Annotation) *stringBuilder {
 	b.desc.Annotations = append(b.desc.Annotations, annotations...)
+	return b
+}
+
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *stringBuilder) Deprecated(reason ...string) *stringBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
 	return b
 }
 
@@ -320,6 +367,7 @@ func (b *stringBuilder) Descriptor() *Descriptor {
 	if b.desc.Default != nil {
 		b.desc.checkDefaultFunc(stringType)
 	}
+	b.desc.checkGoType(stringType)
 	return b.desc
 }
 
@@ -342,7 +390,8 @@ func (b *timeBuilder) Optional() *timeBuilder {
 	return b
 }
 
-// Immutable indicates that this field cannot be updated.
+// Immutable fields are fields that can be set only in the creation of the entity.
+// i.e., no setters will be generated for the entity updaters (one and many).
 func (b *timeBuilder) Immutable() *timeBuilder {
 	b.desc.Immutable = true
 	return b
@@ -365,9 +414,8 @@ func (b *timeBuilder) StructTag(s string) *timeBuilder {
 //
 //	field.Time("created_at").
 //		Default(time.Now)
-//
-func (b *timeBuilder) Default(f func() time.Time) *timeBuilder {
-	b.desc.Default = f
+func (b *timeBuilder) Default(fn any) *timeBuilder {
+	b.desc.Default = fn
 	return b
 }
 
@@ -378,8 +426,12 @@ func (b *timeBuilder) Default(f func() time.Time) *timeBuilder {
 //		Default(time.Now).
 //		UpdateDefault(time.Now),
 //
-func (b *timeBuilder) UpdateDefault(f func() time.Time) *timeBuilder {
-	b.desc.UpdateDefault = f
+//	field.Time("deleted_at").
+//		Optional().
+//		GoType(&sql.NullTime{}).
+//		UpdateDefault(NewNullTime),
+func (b *timeBuilder) UpdateDefault(fn any) *timeBuilder {
+	b.desc.UpdateDefault = fn
 	return b
 }
 
@@ -391,12 +443,14 @@ func (b *timeBuilder) StorageKey(key string) *timeBuilder {
 }
 
 // GoType overrides the default Go type with a custom one.
+// If the provided type implements the Validator interface
+// and no validators have been set, the type validator will
+// be used.
 //
 //	field.Time("deleted_at").
 //		GoType(&sql.NullTime{})
-//
-func (b *timeBuilder) GoType(typ interface{}) *timeBuilder {
-	b.desc.goType(typ, timeType)
+func (b *timeBuilder) GoType(typ any) *timeBuilder {
+	b.desc.goType(typ)
 	return b
 }
 
@@ -407,14 +461,28 @@ func (b *timeBuilder) GoType(typ interface{}) *timeBuilder {
 //		Annotations(
 //			entgql.OrderField("DELETED_AT"),
 //		)
-//
 func (b *timeBuilder) Annotations(annotations ...schema.Annotation) *timeBuilder {
 	b.desc.Annotations = append(b.desc.Annotations, annotations...)
 	return b
 }
 
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *timeBuilder) Deprecated(reason ...string) *timeBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
+	return b
+}
+
 // Descriptor implements the ent.Field interface by returning its descriptor.
 func (b *timeBuilder) Descriptor() *Descriptor {
+	if b.desc.Default != nil {
+		b.desc.checkDefaultFunc(timeType)
+	}
+	b.desc.checkGoType(timeType)
 	return b.desc
 }
 
@@ -426,7 +494,6 @@ func (b *timeBuilder) Descriptor() *Descriptor {
 //			dialect.MySQL:    "datetime",
 //			dialect.Postgres: "time with time zone",
 //		})
-//
 func (b *timeBuilder) SchemaType(types map[string]string) *timeBuilder {
 	b.desc.SchemaType = types
 	return b
@@ -483,12 +550,14 @@ func (b *boolBuilder) StorageKey(key string) *boolBuilder {
 }
 
 // GoType overrides the default Go type with a custom one.
+// If the provided type implements the Validator interface
+// and no validators have been set, the type validator will
+// be used.
 //
 //	field.Bool("deleted").
 //		GoType(&sql.NullBool{})
-//
-func (b *boolBuilder) GoType(typ interface{}) *boolBuilder {
-	b.desc.goType(typ, boolType)
+func (b *boolBuilder) GoType(typ any) *boolBuilder {
+	b.desc.goType(typ)
 	return b
 }
 
@@ -499,14 +568,25 @@ func (b *boolBuilder) GoType(typ interface{}) *boolBuilder {
 //		Annotations(
 //			entgql.OrderField("DELETED"),
 //		)
-//
 func (b *boolBuilder) Annotations(annotations ...schema.Annotation) *boolBuilder {
 	b.desc.Annotations = append(b.desc.Annotations, annotations...)
 	return b
 }
 
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *boolBuilder) Deprecated(reason ...string) *boolBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
+	return b
+}
+
 // Descriptor implements the ent.Field interface by returning its descriptor.
 func (b *boolBuilder) Descriptor() *Descriptor {
+	b.desc.checkGoType(boolType)
 	return b.desc
 }
 
@@ -526,8 +606,10 @@ func (b *bytesBuilder) Default(v []byte) *bytesBuilder {
 //
 //	field.Bytes("cuid").
 //		DefaultFunc(cuid.New)
-//
-func (b *bytesBuilder) DefaultFunc(fn interface{}) *bytesBuilder {
+func (b *bytesBuilder) DefaultFunc(fn any) *bytesBuilder {
+	if t := reflect.TypeOf(fn); t.Kind() != reflect.Func {
+		b.desc.Err = fmt.Errorf("field.Bytes(%q).DefaultFunc expects func but got %s", b.desc.Name, t.Kind())
+	}
 	b.desc.Default = fn
 	return b
 }
@@ -543,6 +625,19 @@ func (b *bytesBuilder) Nillable() *bytesBuilder {
 // Unlike edges, fields are required by default.
 func (b *bytesBuilder) Optional() *bytesBuilder {
 	b.desc.Optional = true
+	return b
+}
+
+// Sensitive fields not printable and not serializable.
+func (b *bytesBuilder) Sensitive() *bytesBuilder {
+	b.desc.Sensitive = true
+	return b
+}
+
+// Unique makes the field unique within all vertices of this type.
+// Only supported in PostgreSQL.
+func (b *bytesBuilder) Unique() *bytesBuilder {
+	b.desc.Unique = true
 	return b
 }
 
@@ -569,6 +664,44 @@ func (b *bytesBuilder) StructTag(s string) *bytesBuilder {
 // In SQLite, it does not have any effect on the type size, which is default to 1B bytes.
 func (b *bytesBuilder) MaxLen(i int) *bytesBuilder {
 	b.desc.Size = i
+	b.desc.Validators = append(b.desc.Validators, func(buf []byte) error {
+		if len(buf) > i {
+			return errors.New("value is greater than the required length")
+		}
+		return nil
+	})
+	return b
+}
+
+// MinLen adds a length validator for this field.
+// Operation fails if the length of the buffer is less than the given value.
+func (b *bytesBuilder) MinLen(i int) *bytesBuilder {
+	b.desc.Validators = append(b.desc.Validators, func(b []byte) error {
+		if len(b) < i {
+			return errors.New("value is less than the required length")
+		}
+		return nil
+	})
+	return b
+}
+
+// NotEmpty adds a length validator for this field.
+// Operation fails if the length of the buffer is zero.
+func (b *bytesBuilder) NotEmpty() *bytesBuilder {
+	return b.MinLen(1)
+}
+
+// Validate adds a validator for this field. Operation fails if the validation fails.
+//
+//	field.Bytes("blob").
+//		Validate(func(b []byte) error {
+//			if len(b) % 2 == 0 {
+//				return fmt.Errorf("ent/schema: blob length is even: %d", len(b))
+//			}
+//			return nil
+//		})
+func (b *bytesBuilder) Validate(fn func([]byte) error) *bytesBuilder {
+	b.desc.Validators = append(b.desc.Validators, fn)
 	return b
 }
 
@@ -580,12 +713,23 @@ func (b *bytesBuilder) StorageKey(key string) *bytesBuilder {
 }
 
 // GoType overrides the default Go type with a custom one.
+// If the provided type implements the Validator interface
+// and no validators have been set, the type validator will
+// be used.
 //
 //	field.Bytes("ip").
 //		GoType(net.IP("127.0.0.1"))
-//
-func (b *bytesBuilder) GoType(typ interface{}) *bytesBuilder {
-	b.desc.goType(typ, bytesType)
+func (b *bytesBuilder) GoType(typ any) *bytesBuilder {
+	b.desc.goType(typ)
+	return b
+}
+
+// ValueScanner provides an external value scanner for the given GoType.
+// Using this option allow users to use field types that do not implement
+// the sql.Scanner and driver.Valuer interfaces, such as slices and maps
+// or types exist in external packages (e.g., url.URL).
+func (b *bytesBuilder) ValueScanner(vs any) *bytesBuilder {
+	b.desc.ValueScanner = vs
 	return b
 }
 
@@ -604,9 +748,19 @@ func (b *bytesBuilder) Annotations(annotations ...schema.Annotation) *bytesBuild
 //			dialect.MySQL:	"tinyblob",
 //			dialect.SQLite:	"tinyblob",
 //		})
-//
 func (b *bytesBuilder) SchemaType(types map[string]string) *bytesBuilder {
 	b.desc.SchemaType = types
+	return b
+}
+
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *bytesBuilder) Deprecated(reason ...string) *bytesBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
 	return b
 }
 
@@ -615,6 +769,7 @@ func (b *bytesBuilder) Descriptor() *Descriptor {
 	if b.desc.Default != nil {
 		b.desc.checkDefaultFunc(bytesType)
 	}
+	b.desc.checkGoType(bytesType)
 	return b.desc
 }
 
@@ -649,6 +804,12 @@ func (b *jsonBuilder) Comment(c string) *jsonBuilder {
 	return b
 }
 
+// Sensitive fields not printable and not serializable.
+func (b *jsonBuilder) Sensitive() *jsonBuilder {
+	b.desc.Sensitive = true
+	return b
+}
+
 // StructTag sets the struct tag of the field.
 func (b *jsonBuilder) StructTag(s string) *jsonBuilder {
 	b.desc.Tag = s
@@ -663,7 +824,6 @@ func (b *jsonBuilder) StructTag(s string) *jsonBuilder {
 //			dialect.MySQL:		"json",
 //			dialect.Postgres:	"jsonb",
 //		})
-//
 func (b *jsonBuilder) SchemaType(types map[string]string) *jsonBuilder {
 	b.desc.SchemaType = types
 	return b
@@ -676,9 +836,163 @@ func (b *jsonBuilder) Annotations(annotations ...schema.Annotation) *jsonBuilder
 	return b
 }
 
+// Default sets the default value of the field. For example:
+//
+//	field.JSON("dirs", []http.Dir{}).
+//		// A static default value.
+//		Default([]http.Dir{"/tmp"})
+//
+//	field.JSON("dirs", []http.Dir{}).
+//		// A function for generating the default value.
+//		Default(DefaultDirs)
+func (b *jsonBuilder) Default(v any) *jsonBuilder {
+	b.desc.Default = v
+	switch fieldT, defaultT := b.desc.Info.RType.rtype, reflect.TypeOf(v); {
+	case fieldT == defaultT:
+	case defaultT.Kind() == reflect.Func:
+		b.desc.checkDefaultFunc(b.desc.Info.RType.rtype)
+	default:
+		b.desc.Err = fmt.Errorf("expect type (func() %[1]s) or (%[1]s) for other default value", b.desc.Info)
+	}
+	return b
+}
+
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *jsonBuilder) Deprecated(reason ...string) *jsonBuilder {
+	b.desc.Deprecated = true
+	return b
+}
+
 // Descriptor implements the ent.Field interface by returning its descriptor.
 func (b *jsonBuilder) Descriptor() *Descriptor {
 	return b.desc
+}
+
+type (
+	sliceType interface {
+		int | string | float64
+	}
+	// sliceBuilder is the builder for string slice fields.
+	sliceBuilder[T sliceType] struct {
+		*jsonBuilder
+	}
+)
+
+// Validate adds a validator for this field. Operation fails if the validation fails.
+func (b *sliceBuilder[T]) Validate(fn func([]T) error) *sliceBuilder[T] {
+	b.desc.Validators = append(b.desc.Validators, fn)
+	return b
+}
+
+// StorageKey sets the storage key of the field.
+// In SQL dialects is the column name and Gremlin is the property.
+func (b *sliceBuilder[T]) StorageKey(key string) *sliceBuilder[T] {
+	b.desc.StorageKey = key
+	return b
+}
+
+// Optional indicates that this field is optional on create.
+// Unlike edges, fields are required by default.
+func (b *sliceBuilder[T]) Optional() *sliceBuilder[T] {
+	b.desc.Optional = true
+	return b
+}
+
+// Immutable indicates that this field cannot be updated.
+func (b *sliceBuilder[T]) Immutable() *sliceBuilder[T] {
+	b.desc.Immutable = true
+	return b
+}
+
+// Comment sets the comment of the field.
+func (b *sliceBuilder[T]) Comment(c string) *sliceBuilder[T] {
+	b.desc.Comment = c
+	return b
+}
+
+// Sensitive fields not printable and not serializable.
+func (b *sliceBuilder[T]) Sensitive() *sliceBuilder[T] {
+	b.desc.Sensitive = true
+	return b
+}
+
+// StructTag sets the struct tag of the field.
+func (b *sliceBuilder[T]) StructTag(s string) *sliceBuilder[T] {
+	b.desc.Tag = s
+	return b
+}
+
+// SchemaType overrides the default database type with a custom
+// schema type (per dialect) for json.
+//
+//	field.Strings("strings").
+//		SchemaType(map[string]string{
+//			dialect.MySQL:		"json",
+//			dialect.Postgres:	"jsonb",
+//		})
+func (b *sliceBuilder[T]) SchemaType(types map[string]string) *sliceBuilder[T] {
+	b.desc.SchemaType = types
+	return b
+}
+
+// Annotations adds a list of annotations to the field object to be used by
+// codegen extensions.
+func (b *sliceBuilder[T]) Annotations(annotations ...schema.Annotation) *sliceBuilder[T] {
+	b.desc.Annotations = append(b.desc.Annotations, annotations...)
+	return b
+}
+
+// Default sets the default value of the field. For example:
+//
+//	field.Strings("names").
+//		Default([]string{"a8m", "masseelch"})
+func (b *sliceBuilder[T]) Default(v []T) *sliceBuilder[T] {
+	b.desc.Default = v
+	return b
+}
+
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *sliceBuilder[T]) Deprecated(reason ...string) *sliceBuilder[T] {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
+	return b
+}
+
+// Descriptor implements the ent.Field interface by returning its descriptor.
+func (b *sliceBuilder[T]) Descriptor() *Descriptor {
+	return b.desc
+}
+
+// sb is a generic helper method to share code between Strings, Ints and Floats builder.
+func sb[T sliceType](name string) *sliceBuilder[T] {
+	var typ []T
+	b := &jsonBuilder{&Descriptor{
+		Name: name,
+		Info: &TypeInfo{
+			Type: TypeJSON,
+		},
+	}}
+	t := reflect.TypeOf(typ)
+	if t == nil {
+		b.desc.Err = errors.New("expect a Go value as JSON type but got nil")
+		return &sliceBuilder[T]{b}
+	}
+	b.desc.Info.Ident = t.String()
+	b.desc.Info.PkgPath = t.PkgPath()
+	b.desc.goType(typ)
+	b.desc.checkGoType(t)
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Ptr, reflect.Map:
+		b.desc.Info.Nillable = true
+		b.desc.Info.PkgPath = pkgPath(t)
+	}
+	return &sliceBuilder[T]{b}
 }
 
 // enumBuilder is the builder for enum fields.
@@ -690,7 +1004,6 @@ type enumBuilder struct {
 //
 //	field.Enum("priority").
 //		Values("low", "mid", "high")
-//
 func (b *enumBuilder) Values(values ...string) *enumBuilder {
 	for _, v := range values {
 		b.desc.Enums = append(b.desc.Enums, struct{ N, V string }{N: v, V: v})
@@ -706,11 +1019,10 @@ func (b *enumBuilder) Values(values ...string) *enumBuilder {
 //
 //	field.Enum("priority").
 //		NamedValues(
-//			"LOW", "low",
-//			"MID", "mid",
-//			"HIGH", "high",
+//			"Low", "LOW",
+//			"Mid", "MID",
+//			"High", "HIGH",
 //		)
-//
 func (b *enumBuilder) NamedValues(namevalue ...string) *enumBuilder {
 	if len(namevalue)%2 == 1 {
 		b.desc.Err = fmt.Errorf("Enum.NamedValues: odd argument count")
@@ -774,7 +1086,6 @@ func (b *enumBuilder) StructTag(s string) *enumBuilder {
 //		SchemaType(map[string]string{
 //			dialect.Postgres: "EnumType",
 //		})
-//
 func (b *enumBuilder) SchemaType(types map[string]string) *enumBuilder {
 	b.desc.SchemaType = types
 	return b
@@ -787,7 +1098,6 @@ func (b *enumBuilder) SchemaType(types map[string]string) *enumBuilder {
 //		Annotations(
 //			entgql.OrderField("ENUM"),
 //		)
-//
 func (b *enumBuilder) Annotations(annotations ...schema.Annotation) *enumBuilder {
 	b.desc.Annotations = append(b.desc.Annotations, annotations...)
 	return b
@@ -799,18 +1109,39 @@ type EnumValues interface {
 }
 
 // GoType overrides the default Go type with a custom one.
+// If the provided type implements the Validator interface
+// and no validators have been set, the type validator will
+// be used.
 //
 //	field.Enum("enum").
 //		GoType(role.Enum("role"))
-//
 func (b *enumBuilder) GoType(ev EnumValues) *enumBuilder {
 	b.Values(ev.Values()...)
-	b.desc.goType(ev, stringType)
+	b.desc.goType(ev)
+	return b
+}
+
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *enumBuilder) Deprecated(reason ...string) *enumBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
 	return b
 }
 
 // Descriptor implements the ent.Field interface by returning its descriptor.
 func (b *enumBuilder) Descriptor() *Descriptor {
+	if b.desc.Info.RType != nil {
+		// If an error already exists, let that be returned instead.
+		// Otherwise, check that the underlying type is either a string or implements Stringer.
+		if b.desc.Err == nil && b.desc.Info.RType.rtype.Kind() != reflect.String && !b.desc.Info.Stringer() {
+			b.desc.Err = errors.New("enum values which implement ValueScanner must also implement Stringer")
+		}
+		b.desc.checkGoType(stringType)
+	}
 	return b.desc
 }
 
@@ -823,6 +1154,13 @@ type uuidBuilder struct {
 // In SQL dialects is the column name and Gremlin is the property.
 func (b *uuidBuilder) StorageKey(key string) *uuidBuilder {
 	b.desc.StorageKey = key
+	return b
+}
+
+// Nillable indicates that this field is a nillable.
+// Unlike "Optional" only fields, "Nillable" fields are pointers in the generated struct.
+func (b *uuidBuilder) Nillable() *uuidBuilder {
+	b.desc.Nillable = true
 	return b
 }
 
@@ -863,8 +1201,7 @@ func (b *uuidBuilder) StructTag(s string) *uuidBuilder {
 //
 //	field.UUID("id", uuid.UUID{}).
 //		Default(uuid.New)
-//
-func (b *uuidBuilder) Default(fn interface{}) *uuidBuilder {
+func (b *uuidBuilder) Default(fn any) *uuidBuilder {
 	typ := reflect.TypeOf(fn)
 	if typ.Kind() != reflect.Func || typ.NumIn() != 0 || typ.NumOut() != 1 || typ.Out(0).String() != b.desc.Info.String() {
 		b.desc.Err = fmt.Errorf("expect type (func() %s) for uuid default value", b.desc.Info)
@@ -880,7 +1217,6 @@ func (b *uuidBuilder) Default(fn interface{}) *uuidBuilder {
 //		SchemaType(map[string]string{
 //			dialect.Postgres: "CustomUUID",
 //		})
-//
 func (b *uuidBuilder) SchemaType(types map[string]string) *uuidBuilder {
 	b.desc.SchemaType = types
 	return b
@@ -893,14 +1229,25 @@ func (b *uuidBuilder) SchemaType(types map[string]string) *uuidBuilder {
 //		Annotations(
 //			entgql.OrderField("ID"),
 //		)
-//
 func (b *uuidBuilder) Annotations(annotations ...schema.Annotation) *uuidBuilder {
 	b.desc.Annotations = append(b.desc.Annotations, annotations...)
 	return b
 }
 
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *uuidBuilder) Deprecated(reason ...string) *uuidBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
+	return b
+}
+
 // Descriptor implements the ent.Field interface by returning its descriptor.
 func (b *uuidBuilder) Descriptor() *Descriptor {
+	b.desc.checkGoType(valueScannerType)
 	return b.desc
 }
 
@@ -938,8 +1285,7 @@ func (b *otherBuilder) Sensitive() *otherBuilder {
 //		}).
 //		// A function for generating the default value.
 //		Default(NewLink)
-//
-func (b *otherBuilder) Default(v interface{}) *otherBuilder {
+func (b *otherBuilder) Default(v any) *otherBuilder {
 	b.desc.Default = v
 	switch fieldT, defaultT := b.desc.Info.RType.rtype, reflect.TypeOf(v); {
 	case fieldT == defaultT:
@@ -998,7 +1344,6 @@ func (b *otherBuilder) StorageKey(key string) *otherBuilder {
 //			dialect.MySQL:    "text",
 //			dialect.Postgres: "varchar",
 //		})
-//
 func (b *otherBuilder) SchemaType(types map[string]string) *otherBuilder {
 	b.desc.SchemaType = types
 	return b
@@ -1015,14 +1360,25 @@ func (b *otherBuilder) SchemaType(types map[string]string) *otherBuilder {
 //		Annotations(
 //			entgql.OrderField("LINK"),
 //		)
-//
 func (b *otherBuilder) Annotations(annotations ...schema.Annotation) *otherBuilder {
 	b.desc.Annotations = append(b.desc.Annotations, annotations...)
 	return b
 }
 
+// Deprecated marks the field as deprecated. Deprecated fields are not
+// selected by default in queries, and their struct fields are annotated
+// with `deprecated` in the generated code.
+func (b *otherBuilder) Deprecated(reason ...string) *otherBuilder {
+	b.desc.Deprecated = true
+	if len(reason) > 0 {
+		b.desc.DeprecatedReason = strings.Join(reason, " ")
+	}
+	return b
+}
+
 // Descriptor implements the ent.Field interface by returning its descriptor.
 func (b *otherBuilder) Descriptor() *Descriptor {
+	b.desc.checkGoType(valueScannerType)
 	if len(b.desc.SchemaType) == 0 {
 		b.desc.Err = fmt.Errorf("expect SchemaType to be set for other field")
 	}
@@ -1031,87 +1387,138 @@ func (b *otherBuilder) Descriptor() *Descriptor {
 
 // A Descriptor for field configuration.
 type Descriptor struct {
-	Tag           string                  // struct tag.
-	Size          int                     // varchar size.
-	Name          string                  // field name.
-	Info          *TypeInfo               // field type info.
-	Unique        bool                    // unique index of field.
-	Nillable      bool                    // nillable struct field.
-	Optional      bool                    // nullable field in database.
-	Immutable     bool                    // create-only field.
-	Default       interface{}             // default value on create.
-	UpdateDefault interface{}             // default value on update.
-	Validators    []interface{}           // validator functions.
-	StorageKey    string                  // sql column or gremlin property.
-	Enums         []struct{ N, V string } // enum values.
-	Sensitive     bool                    // sensitive info string field.
-	SchemaType    map[string]string       // override the schema type.
-	Annotations   []schema.Annotation     // field annotations.
-	Comment       string                  // field comment.
-	Err           error
+	Tag              string                  // struct tag.
+	Size             int                     // varchar size.
+	Name             string                  // field name.
+	Info             *TypeInfo               // field type info.
+	ValueScanner     any                     // custom field codec.
+	Unique           bool                    // unique index of field.
+	Nillable         bool                    // nillable struct field.
+	Optional         bool                    // nullable field in database.
+	Immutable        bool                    // create only field.
+	Default          any                     // default value on create.
+	UpdateDefault    any                     // default value on update.
+	Validators       []any                   // validator functions.
+	StorageKey       string                  // sql column or gremlin property.
+	Enums            []struct{ N, V string } // enum values.
+	Sensitive        bool                    // sensitive info string field.
+	SchemaType       map[string]string       // override the schema type.
+	Annotations      []schema.Annotation     // field annotations.
+	Comment          string                  // field comment.
+	Deprecated       bool                    // mark the field as deprecated.
+	DeprecatedReason string                  // deprecation reason.
+	Err              error
 }
 
-func (d *Descriptor) goType(typ interface{}, expectType reflect.Type) {
+func (d *Descriptor) goType(typ any) {
 	t := reflect.TypeOf(typ)
 	tv := indirect(t)
 	info := &TypeInfo{
 		Type:    d.Info.Type,
-		Ident:   tv.String(),
+		Ident:   t.String(),
 		PkgPath: tv.PkgPath(),
+		PkgName: pkgName(tv.String()),
 		RType: &RType{
-			rtype:   tv,
+			rtype:   t,
+			Kind:    t.Kind(),
 			Name:    tv.Name(),
-			Kind:    tv.Kind(),
+			Ident:   tv.String(),
 			PkgPath: tv.PkgPath(),
 			Methods: make(map[string]struct{ In, Out []*RType }, t.NumMethod()),
 		},
 	}
+	methods(t, info.RType)
 	switch t.Kind() {
-	case reflect.Slice, reflect.Array, reflect.Ptr, reflect.Map:
+	case reflect.Slice, reflect.Ptr, reflect.Map:
 		info.Nillable = true
-	}
-	switch {
-	case t.Kind() == expectType.Kind() && t.ConvertibleTo(expectType):
-	case t.Implements(valueScannerType):
-		n := t.NumMethod()
-		for i := 0; i < n; i++ {
-			m := t.Method(i)
-			in := make([]*RType, m.Type.NumIn()-1)
-			for j := range in {
-				arg := m.Type.In(j + 1)
-				in[j] = &RType{Name: arg.Name(), Kind: arg.Kind(), PkgPath: arg.PkgPath()}
-			}
-			out := make([]*RType, m.Type.NumOut())
-			for j := range out {
-				ret := m.Type.Out(j)
-				out[j] = &RType{Name: ret.Name(), Kind: ret.Kind(), PkgPath: ret.PkgPath()}
-			}
-			info.RType.Methods[m.Name] = struct{ In, Out []*RType }{in, out}
-		}
-	default:
-		d.Err = fmt.Errorf("GoType must be a %q type or ValueScanner", expectType)
-		if pt := reflect.PtrTo(t); pt.Implements(valueScannerType) {
-			d.Err = fmt.Errorf("%s. Use %s instead", d.Err, pt)
-		}
 	}
 	d.Info = info
 }
 
+func (d *Descriptor) checkGoType(expectType reflect.Type) {
+	t := expectType
+	if d.Info.RType != nil && d.Info.RType.rtype != nil {
+		t = d.Info.RType.rtype
+	}
+	switch pt := reflect.PtrTo(t); {
+	// An external ValueScanner.
+	case d.ValueScanner != nil:
+		vs := reflect.Indirect(reflect.ValueOf(d.ValueScanner)).Type()
+		m1, ok1 := vs.MethodByName("Value")
+		m2, ok2 := vs.MethodByName("ScanValue")
+		m3, ok3 := vs.MethodByName("FromValue")
+		switch {
+		case !ok1, m1.Type.NumIn() != 2, m1.Type.In(1) != t,
+			m1.Type.NumOut() != 2, m1.Type.Out(0) != valueType, m1.Type.Out(1) != errorType:
+			d.Err = fmt.Errorf("ValueScanner must implement the Value method: func Value(%s) (driver.Valuer, error)", t)
+		case !ok2, m2.Type.NumIn() != 1, m2.Type.NumOut() != 1, m2.Type.Out(0) != valueScannerType:
+			d.Err = errors.New("ValueScanner must implement the ScanValue method: func ScanValue() field.ValueScanner")
+		case !ok3, m3.Type.NumIn() != 2, m3.Type.In(1) != valueType, m3.Type.NumOut() != 2, m3.Type.Out(0) != t, m3.Type.Out(1) != errorType:
+			d.Err = fmt.Errorf("ValueScanner must implement the FromValue method: func FromValue(driver.Valuer) (%s, error)", t)
+		}
+	// No GoType was provided.
+	case d.Info.RType == nil:
+	// A GoType without an external ValueScanner.
+	case pt.Implements(valueScannerType), t.Implements(valueScannerType), t.Kind() == expectType.Kind() && t.ConvertibleTo(expectType):
+	// There is a GoType, but it's not a ValueScanner.
+	default:
+		d.Err = fmt.Errorf("GoType must be a %q type, ValueScanner or provide an external ValueScanner", expectType)
+	}
+}
+
+// pkgName returns the package name from a Go
+// identifier with a package qualifier.
+func pkgName(ident string) string {
+	i := strings.LastIndexByte(ident, '.')
+	if i == -1 {
+		return ""
+	}
+	s := ident[:i]
+	if i := strings.LastIndexAny(s, "]*"); i != -1 {
+		s = s[i+1:]
+	}
+	return s
+}
+
+func methods(t reflect.Type, rtype *RType) {
+	// For type T, add methods with
+	// pointer receiver as well (*T).
+	if t.Kind() != reflect.Ptr {
+		t = reflect.PtrTo(t)
+	}
+	n := t.NumMethod()
+	for i := 0; i < n; i++ {
+		m := t.Method(i)
+		in := make([]*RType, m.Type.NumIn()-1)
+		for j := range in {
+			arg := m.Type.In(j + 1)
+			in[j] = &RType{Name: arg.Name(), Ident: arg.String(), Kind: arg.Kind(), PkgPath: arg.PkgPath()}
+		}
+		out := make([]*RType, m.Type.NumOut())
+		for j := range out {
+			ret := m.Type.Out(j)
+			out[j] = &RType{Name: ret.Name(), Ident: ret.String(), Kind: ret.Kind(), PkgPath: ret.PkgPath()}
+		}
+		rtype.Methods[m.Name] = struct{ In, Out []*RType }{in, out}
+	}
+}
+
 func (d *Descriptor) checkDefaultFunc(expectType reflect.Type) {
-	typ := reflect.TypeOf(d.Default)
-	if typ.Kind() != reflect.Func || d.Err != nil {
-		return
-	}
-	err := fmt.Errorf("expect type (func() %s) for default value", d.Info)
-	if typ.NumIn() != 0 || typ.NumOut() != 1 {
-		d.Err = err
-	}
-	rtype := expectType
-	if d.Info.RType != nil {
-		rtype = d.Info.RType.rtype
-	}
-	if !typ.Out(0).AssignableTo(rtype) {
-		d.Err = err
+	for _, typ := range []reflect.Type{reflect.TypeOf(d.Default), reflect.TypeOf(d.UpdateDefault)} {
+		if typ == nil || typ.Kind() != reflect.Func || d.Err != nil {
+			continue
+		}
+		err := fmt.Errorf("expect type (func() %s) for default value", d.Info)
+		if typ.NumIn() != 0 || typ.NumOut() != 1 {
+			d.Err = err
+		}
+		rtype := expectType
+		if d.Info.RType != nil {
+			rtype = d.Info.RType.rtype
+		}
+		if !typ.Out(0).AssignableTo(rtype) {
+			d.Err = err
+		}
 	}
 }
 
@@ -1120,13 +1527,134 @@ var (
 	bytesType        = reflect.TypeOf([]byte(nil))
 	timeType         = reflect.TypeOf(time.Time{})
 	stringType       = reflect.TypeOf("")
+	valueType        = reflect.TypeOf((*driver.Value)(nil)).Elem()
+	valuerType       = reflect.TypeOf((*driver.Valuer)(nil)).Elem()
+	errorType        = reflect.TypeOf((*error)(nil)).Elem()
 	valueScannerType = reflect.TypeOf((*ValueScanner)(nil)).Elem()
+	validatorType    = reflect.TypeOf((*Validator)(nil)).Elem()
 )
 
-// ValueScanner is the interface that groups the Value and the Scan methods.
+// ValueScanner is the interface that groups the Value
+// and the Scan methods implemented by custom Go types.
 type ValueScanner interface {
 	driver.Valuer
 	sql.Scanner
+}
+
+// TypeValueScanner is the interface that groups all methods for
+// attaching an external ValueScanner to a custom GoType.
+type TypeValueScanner[T any] interface {
+	// Value returns the driver.Valuer for the GoType.
+	Value(T) (driver.Value, error)
+	// ScanValue returns a new ValueScanner that functions as an
+	// intermediate result between database value and GoType value.
+	// For example, sql.NullString or sql.NullInt.
+	ScanValue() ValueScanner
+	// FromValue returns the field instance from the ScanValue
+	// above after the database value was scanned.
+	FromValue(driver.Value) (T, error)
+}
+
+// TextValueScanner returns a new TypeValueScanner that calls MarshalText
+// for storing values in the database, and calls UnmarshalText for scanning
+// database values into struct fields.
+type TextValueScanner[T interface {
+	encoding.TextMarshaler
+	encoding.TextUnmarshaler
+}] struct{}
+
+// Value implements the TypeValueScanner.Value method.
+func (TextValueScanner[T]) Value(v T) (driver.Value, error) {
+	return v.MarshalText()
+}
+
+// ScanValue implements the TypeValueScanner.ScanValue method.
+func (TextValueScanner[T]) ScanValue() ValueScanner {
+	return &sql.NullString{}
+}
+
+// FromValue implements the TypeValueScanner.FromValue method.
+func (TextValueScanner[T]) FromValue(v driver.Value) (tv T, err error) {
+	s, ok := v.(*sql.NullString)
+	if !ok {
+		return tv, fmt.Errorf("unexpected input for FromValue: %T", v)
+	}
+	tv = newT(tv).(T)
+	if s.Valid {
+		err = tv.UnmarshalText([]byte(s.String))
+	}
+	return tv, err
+}
+
+// BinaryValueScanner returns a new TypeValueScanner that calls MarshalBinary
+// for storing values in the database, and calls UnmarshalBinary for scanning
+// database values into struct fields.
+type BinaryValueScanner[T interface {
+	encoding.BinaryMarshaler
+	encoding.BinaryUnmarshaler
+}] struct{}
+
+// Value implements the TypeValueScanner.Value method.
+func (BinaryValueScanner[T]) Value(v T) (driver.Value, error) {
+	return v.MarshalBinary()
+}
+
+// ScanValue implements the TypeValueScanner.ScanValue method.
+func (BinaryValueScanner[T]) ScanValue() ValueScanner {
+	return &sql.NullString{}
+}
+
+// FromValue implements the TypeValueScanner.FromValue method.
+func (BinaryValueScanner[T]) FromValue(v driver.Value) (tv T, err error) {
+	s, ok := v.(*sql.NullString)
+	if !ok {
+		return tv, fmt.Errorf("unexpected input for FromValue: %T", v)
+	}
+	tv = newT(tv).(T)
+	if s.Valid {
+		err = tv.UnmarshalBinary([]byte(s.String))
+	}
+	return tv, err
+}
+
+// ValueScannerFunc is a wrapper for a function that implements the ValueScanner.
+type ValueScannerFunc[T any, S ValueScanner] struct {
+	V func(T) (driver.Value, error)
+	S func(S) (T, error)
+}
+
+// Value implements the TypeValueScanner.Value method.
+func (f ValueScannerFunc[T, S]) Value(t T) (driver.Value, error) {
+	return f.V(t)
+}
+
+// ScanValue implements the TypeValueScanner.ScanValue method.
+func (f ValueScannerFunc[T, S]) ScanValue() ValueScanner {
+	var s S
+	return newT(s).(S)
+}
+
+// FromValue implements the TypeValueScanner.FromValue method.
+func (f ValueScannerFunc[T, S]) FromValue(v driver.Value) (tv T, err error) {
+	s, ok := v.(S)
+	if !ok {
+		return tv, fmt.Errorf("unexpected input for FromValue: %T", v)
+	}
+	return f.S(s)
+}
+
+// newT ensures the type is initialized.
+func newT(t any) any {
+	if rt := reflect.TypeOf(t); rt.Kind() == reflect.Ptr {
+		return reflect.New(rt.Elem()).Interface()
+	}
+	return t
+}
+
+// Validator interface wraps the Validate method. Custom GoTypes with
+// this method will be validated when the entity is created or updated.
+type Validator interface {
+	Validate() error
 }
 
 // indirect returns the type at the end of indirection.

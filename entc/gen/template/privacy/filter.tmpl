@@ -4,6 +4,8 @@ This source code is licensed under the Apache 2.0 license found
 in the LICENSE file in the root directory of this source tree.
 */}}
 
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+
 {{ define "privacy/filter" }}
 
 {{ $pkg := base $.Config.Package }}
@@ -54,7 +56,7 @@ func queryFilter(q {{ $pkg }}.Query) (Filter, error) {
 
 func mutationFilter(m {{ $pkg }}.Mutation) (Filter, error) {
 	switch m := m.(type) {
-	{{- range $n := $.Nodes }}
+	{{- range $n := $.MutableNodes }}
 		case *{{ $pkg }}.{{ $n.MutationName }}:
 			return m.Filter(), nil
 	{{- end }}

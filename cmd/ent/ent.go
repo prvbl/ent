@@ -7,7 +7,7 @@ package main
 import (
 	"log"
 
-	"github.com/facebook/ent/cmd/internal/base"
+	"entgo.io/ent/cmd/internal/base"
 
 	"github.com/spf13/cobra"
 )
@@ -16,9 +16,10 @@ func main() {
 	log.SetFlags(0)
 	cmd := &cobra.Command{Use: "ent"}
 	cmd.AddCommand(
-		base.InitCmd(),
+		base.NewCmd(),
 		base.DescribeCmd(),
 		base.GenerateCmd(),
+		base.InitCmd(),
 	)
 	_ = cmd.Execute()
 }

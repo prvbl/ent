@@ -4,22 +4,21 @@ This source code is licensed under the Apache 2.0 license found
 in the LICENSE file in the root directory of this source tree.
 */}}
 
+{{/* gotype: entgo.io/ent/entc/gen.Type */}}
+
 {{ define "update" }}
 {{ $pkg := base $.Config.Package }}
 
 {{ template "header" $ }}
 
-{{ template "import" $ }}
-
-import (
-	{{- range $path := $.SiblingImports }}
-		"{{ $path }}"
-	{{- end }}
-)
+{{ with extend $ "Imports" $.SiblingImports }}
+	{{ template "import" . }}
+{{ end }}
 
 {{ $builder := $.UpdateName }}
-{{ $receiver := receiver $builder }}
+{{ $receiver := $.UpdateReceiver }}
 {{ $mutation := print $receiver ".mutation" }}
+{{ $runtimeRequired := or $.NumHooks $.NumPolicy }}
 
 // {{ $builder }} is the builder for updating {{ $.Name }} entities.
 type {{ $builder }} struct {
@@ -27,60 +26,32 @@ type {{ $builder }} struct {
 	{{- template "update/fields" $ -}}
 }
 
-// Where adds a new predicate for the {{ $builder }} builder.
+// Where appends a list predicates to the {{ $builder }} builder.
 func ({{ $receiver}} *{{ $builder }}) Where(ps ...predicate.{{ $.Name }}) *{{ $builder }} {
-	{{ $mutation }}.predicates = append({{ $mutation }}.predicates, ps...)
+	{{ $mutation }}.Where(ps...)
 	return {{ $receiver }}
 }
 
-{{ with extend $ "Builder" $builder }}
+{{ with extend $ "Receiver" $receiver "Builder" $builder }}
 	{{ template "setter" . }}
 {{ end }}
 
-{{ with extend $ "Builder" $builder }}
+{{ with extend $ "Receiver" $receiver "Builder" $builder }}
 	{{ template "update/edges" . }}
 {{ end }}
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func ({{ $receiver }} *{{ $builder }}) Save(ctx context.Context) (int, error) {
-	var (
-		err error
-		affected int
-	)
 	{{- if $.HasUpdateDefault }}
-		{{ $receiver }}.defaults()
-	{{- end }}
-	if len({{ $receiver }}.hooks) == 0 {
-		{{- if $.HasUpdateCheckers }}
-			if err = {{ $receiver }}.check(); err != nil {
+		{{- if $runtimeRequired }}
+			if err := {{ $receiver }}.defaults(); err != nil {
 				return 0, err
 			}
+		{{- else }}
+			{{ $receiver }}.defaults()
 		{{- end }}
-		affected, err = {{ $receiver }}.{{ $.Storage }}Save(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*{{ $.MutationName }})
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			{{- if $.HasUpdateCheckers }}
-				if err = {{ $receiver }}.check(); err != nil {
-					return 0, err
-				}
-			{{- end }}
-			{{ $mutation }} = mutation
-			affected, err = {{ $receiver }}.{{ $.Storage }}Save(ctx)
-			mutation.done = true
-			return affected, err
-		})
-		for i := len({{ $receiver }}.hooks) - 1; i >= 0; i-- {
-			mut = {{ $receiver }}.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, {{ $mutation }}); err != nil {
-			return 0, err
-		}
-	}
-	return affected, err
+	{{- end }}
+	return withHooks(ctx, {{ $receiver }}.{{ $.Storage }}Save, {{ $mutation }}, {{ $receiver }}.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -109,7 +80,7 @@ func ({{ $receiver }} *{{ $builder }}) ExecX(ctx context.Context) {
 	{{ template "update/checks" . }}
 {{ end }}
 
-{{ with extend $ "Builder" $builder "Package" $pkg }}
+{{ with extend $ "Receiver" $receiver "Builder" $builder "Package" $pkg }}
 	{{ $tmpl := printf "dialect/%s/update" $.Storage }}
 	{{ xtemplate $tmpl . }}
 {{ end }}
@@ -121,58 +92,44 @@ func ({{ $receiver }} *{{ $builder }}) ExecX(ctx context.Context) {
 // {{ $onebuilder }} is the builder for updating a single {{ $.Name }} entity.
 type {{ $onebuilder }} struct {
 	config
+	fields []string
 	{{- template "update/fields" $ }}
 }
 
-{{ with extend $ "Builder" $onebuilder }}
+{{ with extend $ "Receiver" $receiver "Builder" $onebuilder }}
 	{{ template "setter" . }}
 {{ end }}
 
 
-{{ with extend $ "Builder" $onebuilder }}
+{{ with extend $ "Receiver" $receiver "Builder" $onebuilder }}
 	{{ template "update/edges" . }}
 {{ end }}
 
+// Where appends a list predicates to the {{ $builder }} builder.
+func ({{ $receiver }} *{{ $onebuilder }}) Where(ps ...predicate.{{ $.Name }}) *{{ $onebuilder }} {
+	{{ $mutation }}.Where(ps...)
+	return {{ $receiver }}
+}
+
+// Select allows selecting one or more fields (columns) of the returned entity.
+// The default is selecting all fields defined in the entity schema.
+func ({{ $receiver }} *{{ $onebuilder }}) Select(field string, fields ...string) *{{ $onebuilder }} {
+	{{ $receiver }}.fields = append([]string{field}, fields...)
+	return {{ $receiver }}
+}
+
 // Save executes the query and returns the updated {{ $.Name }} entity.
 func ({{ $receiver }} *{{ $onebuilder }} ) Save(ctx context.Context) (*{{ $.Name }}, error) {
-	var (
-		err error
-		node *{{ $.Name }}
-	)
 	{{- if $.HasUpdateDefault }}
-		{{ $receiver }}.defaults()
-	{{- end }}
-	if len({{ $receiver }}.hooks) == 0 {
-		{{- if $.HasUpdateCheckers }}
-			if err = {{ $receiver }}.check(); err != nil {
+		{{- if $runtimeRequired }}
+			if err := {{ $receiver }}.defaults(); err != nil {
 				return nil, err
 			}
+		{{- else }}
+			{{ $receiver }}.defaults()
 		{{- end }}
-		node, err = {{ $receiver }}.{{ $.Storage }}Save(ctx)
-	} else {
-		var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
-			mutation, ok := m.(*{{ $.MutationName }})
-			if !ok {
-				return nil, fmt.Errorf("unexpected mutation type %T", m)
-			}
-			{{- if $.HasUpdateCheckers }}
-				if err = {{ $receiver }}.check(); err != nil {
-					return nil, err
-				}
-			{{- end }}
-			{{ $mutation }} = mutation
-			node, err = {{ $receiver }}.{{ $.Storage }}Save(ctx)
-			mutation.done = true
-			return node, err
-		})
-		for i := len({{ $receiver }}.hooks) - 1; i >= 0; i-- {
-			mut = {{ $receiver }}.hooks[i](mut)
-		}
-		if _, err := mut.Mutate(ctx, {{ $mutation }}); err != nil {
-			return nil, err
-		}
-	}
-	return node, err
+	{{- end }}
+	return withHooks(ctx, {{ $receiver }}.{{ $.Storage }}Save, {{ $mutation }}, {{ $receiver }}.hooks)
 }
 
 // SaveX is like Save, but panics if an error occurs.
@@ -201,10 +158,17 @@ func ({{ $receiver }} *{{ $onebuilder }}) ExecX(ctx context.Context) {
 	{{ template "update/checks" . }}
 {{ end }}
 
-{{ with extend $ "Builder" $onebuilder "Package" $pkg }}
+{{ with extend $ "Receiver" $receiver "Builder" $onebuilder "Package" $pkg }}
 	{{ $tmpl := printf "dialect/%s/update" $.Storage }}
 	{{ xtemplate $tmpl . }}
 {{ end }}
+
+{{- /* Support adding update methods by global templates. */}}
+{{- with $tmpls := matchTemplate "update/additional/*" }}
+	{{- range $tmpl := $tmpls }}
+		{{ xtemplate $tmpl $ }}
+	{{- end }}
+{{- end }}
 
 {{ end }}
 
@@ -212,15 +176,24 @@ func ({{ $receiver }} *{{ $onebuilder }}) ExecX(ctx context.Context) {
 {{ define "update/fields"}}
 	hooks []Hook
 	mutation *{{ $.MutationName }}
+	{{- /* Additional fields to add to the builder. */}}
+	{{- $tmpl := printf "dialect/%s/update/fields" $.Storage }}
+	{{- if hasTemplate $tmpl }}
+		{{- xtemplate $tmpl . }}
+	{{- end }}
 {{ end }}
 
 {{/* shared edges removal between the two updaters */}}
 {{ define "update/edges" }}
 {{ $builder := pascal .Scope.Builder }}
-{{ $receiver := receiver $builder }}
+{{ $receiver := .Scope.Receiver }}
 {{ $mutation := print $receiver ".mutation" }}
 
-{{ range $e := $.Edges }}
+{{ range $e := $.EdgesWithID }}
+	{{ if $e.Immutable }}
+		{{/* Skip to the next one as immutable edges cannot be updated. */}}
+		{{continue}}
+	{{ end }}
 	{{ $func := $e.MutationClear }}
 	// {{ $func }} clears {{ if $e.Unique }}the "{{ $e.Name }}" edge{{ else }}all "{{ $e.Name }}" edges{{ end }} to the {{ $e.Type.Name }} entity.
 	func ({{ $receiver }} *{{ $builder }}) {{ $func }}() *{{ $builder }} {
@@ -257,17 +230,26 @@ func ({{ $receiver }} *{{ $onebuilder }}) ExecX(ctx context.Context) {
 {{ $receiver := .Scope.Receiver }}
 {{ $builder := pascal .Scope.Builder }}
 {{ $mutation := print $receiver ".mutation" }}
+{{ $runtimeRequired := or $.NumHooks $.NumPolicy }}
 
 {{ if $.HasUpdateDefault }}
 	// defaults sets the default values of the builder before save.
-	func ({{ $receiver }} *{{ $builder }}) defaults() {
+	func ({{ $receiver }} *{{ $builder }}) defaults() {{ if $runtimeRequired }}error{{ end }}{
 		{{- range $f := $.Fields }}
 			{{- if $f.UpdateDefault }}
 				if _, ok := {{ $mutation }}.{{ $f.MutationGet }}(); !ok {{ if $f.Optional }} && !{{ $mutation }}.{{ $f.StructField }}Cleared() {{ end }} {
-					v := {{ $.Package }}.{{ $f.UpdateDefaultName }}{{ if $f.IsTime }}(){{ end }}
-					{{ $mutation }}.Set{{ $f.StructField }}(v)
+					{{- if $runtimeRequired }}
+						if {{ $.Package }}.{{ $f.UpdateDefaultName }} == nil {
+							return fmt.Errorf("{{ $pkg }}: uninitialized {{ $.Package }}.{{ $f.UpdateDefaultName }} (forgotten import {{ $pkg }}/runtime?)")
+						}
+					{{- end }}
+					v := {{ $.Package }}.{{ $f.UpdateDefaultName }}()
+					{{ $mutation }}.{{ $f.MutationSet }}(v)
 				}
 			{{- end }}
+		{{- end }}
+		{{- if $runtimeRequired }}
+			return nil
 		{{- end }}
 	}
 {{ end }}
@@ -276,19 +258,19 @@ func ({{ $receiver }} *{{ $onebuilder }}) ExecX(ctx context.Context) {
 	// check runs all checks and user-defined validators on the builder.
 	func ({{ $receiver }} *{{ $builder }}) check() error {
 		{{- range $f := $.Fields }}
-			{{- with and (or $f.Validators $f.IsEnum) (not $f.Immutable) }}
+			{{- $isValidator := and ($f.HasGoType) ($f.Type.Validator) }}
+			{{- with and (not $f.Immutable) (or $f.Validators $f.IsEnum $isValidator) }}
 				if v, ok := {{ $mutation }}.{{ $f.MutationGet }}(); ok {
-					{{- $basic := $f.BasicType "v" }}
-					if err := {{ $.Package }}.{{ $f.Validator }}({{ $basic }}); err != nil {
-						return &ValidationError{Name: "{{ $f.Name }}", err: fmt.Errorf("{{ $pkg }}: validator failed for field \"{{ $f.Name }}\": %w", err)}
+					if err := {{ if or $f.Validators $f.IsEnum }}{{ $.Package }}.{{ $f.Validator }}({{ $f.BasicType "v" }}){{ else }}v.Validate(){{ end }}; err != nil {
+						return &ValidationError{Name: "{{ $f.Name }}", err: fmt.Errorf(`{{ $pkg }}: validator failed for field "{{ $.Name }}.{{ $f.Name }}": %w`, err)}
 					}
 				}
 			{{- end }}
 		{{- end }}
 		{{- range $e := $.Edges }}
 			{{- if and $e.Unique (not $e.Optional) }}
-				if _, ok := {{ $mutation }}.{{ $e.StructField }}ID(); {{ $mutation }}.{{ $e.StructField }}Cleared() && !ok {
-					return errors.New("{{ $pkg }}: clearing a required unique edge \"{{ $e.Name }}\"")
+				if {{ $mutation }}.{{ $e.StructField }}Cleared() && len({{ $mutation }}.{{ $e.StructField }}IDs()) > 0 {
+					return errors.New(`{{ $pkg }}: clearing a required unique edge "{{ $.Name }}.{{ $e.Name }}"`)
 				}
 			{{- end }}
 		{{- end }}

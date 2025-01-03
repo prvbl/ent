@@ -5,11 +5,13 @@
 package schema
 
 import (
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/entc/integration/privacy/ent/privacy"
-	"github.com/facebook/ent/entc/integration/privacy/rule"
-	"github.com/facebook/ent/schema/edge"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
+	"entgo.io/ent/entc/integration/privacy/ent/privacy"
+	"entgo.io/ent/entc/integration/privacy/rule"
+	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
 )
 
 // User defines the schema of a user.
@@ -54,5 +56,14 @@ func (User) Policy() ent.Policy {
 		Query: privacy.QueryPolicy{
 			privacy.AlwaysAllowRule(),
 		},
+	}
+}
+
+// Annotations of the user.
+func (User) Annotations() []schema.Annotation {
+	return []schema.Annotation{
+		entsql.Checks(map[string]string{
+			"backticks": "`name` IS NOT NULL",
+		}),
 	}
 }

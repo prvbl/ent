@@ -10,10 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/facebook/ent/entc/integration/ent"
-	"github.com/facebook/ent/entc/integration/ent/pet"
-	"github.com/facebook/ent/entc/integration/ent/user"
-	"github.com/facebook/ent/entql"
+	"entgo.io/ent/entc/integration/ent"
+	"entgo.io/ent/entc/integration/ent/pet"
+	"entgo.io/ent/entc/integration/ent/user"
+	"entgo.io/ent/entql"
 
 	"github.com/stretchr/testify/require"
 )
@@ -46,6 +46,8 @@ func EntQL(t *testing.T, client *ent.Client) {
 		entql.And(
 			entql.HasEdge("pets"),
 			entql.HasEdgeWith("friends", entql.FieldEQ("name", "nati")),
+			entql.HasEdgeWith("friends", entql.FieldIn("name", "nati")),
+			entql.HasEdgeWith("friends", entql.FieldIn("name", "nati", "a8m")),
 		),
 	)
 	require.Equal(a8m.ID, uq.OnlyIDX(ctx))
@@ -86,4 +88,10 @@ func EntQL(t *testing.T, client *ent.Client) {
 	uq = client.User.Query()
 	uq.Filter().WhereRole(entql.StringEQ(string(user.RoleAdmin)))
 	require.Equal(a8m.ID, uq.OnlyIDX(ctx))
+
+	uq = client.User.Query()
+	uq.Filter().WhereName(entql.StringEQ(a8m.Name))
+	uq = uq.QueryFriends()
+	uq.Filter().WhereName(entql.StringEQ(nati.Name))
+	require.Equal(luna.ID, uq.QueryPets().OnlyIDX(ctx))
 }

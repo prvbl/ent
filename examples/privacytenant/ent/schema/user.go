@@ -5,9 +5,9 @@
 package schema
 
 import (
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/schema/edge"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
 )
 
 // User holds the schema definition for the User entity.
@@ -42,6 +42,6 @@ func (User) Edges() []ent.Edge {
 
 // Policy defines the privacy policy of the User.
 func (User) Policy() ent.Policy {
-	// Privacy policy defined in the TenantMixin.
+	// Privacy policy defined in the BaseMixin and TenantMixin.
 	return nil
 }

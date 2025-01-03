@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,10 +16,10 @@ import (
 	"text/template"
 	"unicode"
 
-	"github.com/facebook/ent/cmd/internal/printer"
-	"github.com/facebook/ent/entc"
-	"github.com/facebook/ent/entc/gen"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent/cmd/internal/printer"
+	"entgo.io/ent/entc"
+	"entgo.io/ent/entc/gen"
+	"entgo.io/ent/schema/field"
 
 	"github.com/spf13/cobra"
 )
@@ -65,13 +64,28 @@ func (IDType) String() string {
 
 // InitCmd returns the init command for ent/c packages.
 func InitCmd() *cobra.Command {
-	var target string
+	c := NewCmd()
+	c.Use = "init [flags] [schemas]"
+	c.Short = "initialize an environment with zero or more schemas"
+	c.Example = examples(
+		"ent init Example",
+		"ent init --target entv1/schema User Group",
+		"ent init --template ./path/to/file.tmpl User",
+	)
+	c.Deprecated = `use "ent new" instead`
+	return c
+}
+
+// NewCmd returns the new command for ent/c packages.
+func NewCmd() *cobra.Command {
+	var target, prefix, tmplPath string
 	cmd := &cobra.Command{
-		Use:   "init [flags] [schemas]",
-		Short: "initialize an environment with zero or more schemas",
+		Use:   "new [flags] [schemas]",
+		Short: "initialize a new environment with zero or more schemas",
 		Example: examples(
-			"ent init Example",
-			"ent init --target entv1/schema User Group",
+			"ent new Example",
+			"ent new --target entv1/schema User Group",
+			"ent new --template ./path/to/file.tmpl User",
 		),
 		Args: func(_ *cobra.Command, names []string) error {
 			for _, name := range names {
@@ -82,12 +96,28 @@ func InitCmd() *cobra.Command {
 			return nil
 		},
 		Run: func(cmd *cobra.Command, names []string) {
-			if err := initEnv(target, names); err != nil {
-				log.Fatalln(fmt.Errorf("ent/init: %w", err))
+			var (
+				err  error
+				tmpl *template.Template
+			)
+			if tmplPath != "" {
+				tmpl = template.New(filepath.Base(tmplPath)).Funcs(gen.Funcs)
+				tmpl, err = tmpl.ParseFiles(tmplPath)
+			} else {
+				tmpl = template.New("schema").Funcs(gen.Funcs)
+				tmpl, err = tmpl.Parse(defaultTemplate)
+			}
+			if err != nil {
+				log.Fatalln(fmt.Errorf("ent/new: could not parse template %w", err))
+			}
+			if err := newEnv(target, prefix, names, tmpl); err != nil {
+				log.Fatalln(fmt.Errorf("ent/new: %w", err))
 			}
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", defaultSchema, "target directory for schemas")
+	cmd.Flags().StringVar(&tmplPath, "template", "", "template to use for new schemas")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "prefix for entity subpackages")
 	return cmd
 }
 
@@ -95,7 +125,7 @@ func InitCmd() *cobra.Command {
 func DescribeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "describe [flags] path",
-		Short: "printer a description of the graph schema",
+		Short: "print a description of the graph schema",
 		Example: examples(
 			"ent describe ./ent/schema",
 			"ent describe github.com/a8m/x",
@@ -116,6 +146,7 @@ func GenerateCmd(postRun ...func(*gen.Config)) *cobra.Command {
 	var (
 		cfg       gen.Config
 		storage   string
+		prefix    string
 		features  []string
 		templates []string
 		idtype    = IDType(field.TypeInt)
@@ -130,6 +161,7 @@ func GenerateCmd(postRun ...func(*gen.Config)) *cobra.Command {
 			Run: func(cmd *cobra.Command, path []string) {
 				opts := []entc.Option{
 					entc.Storage(storage),
+					entc.Prefix(prefix),
 					entc.FeatureNames(features...),
 				}
 				for _, tmpl := range templates {
@@ -168,36 +200,43 @@ func GenerateCmd(postRun ...func(*gen.Config)) *cobra.Command {
 		}
 	)
 	cmd.Flags().Var(&idtype, "idtype", "type of the id field")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "prefix for entity subpackages")
 	cmd.Flags().StringVar(&storage, "storage", "sql", "storage driver to support in codegen")
 	cmd.Flags().StringVar(&cfg.Header, "header", "", "override codegen header")
 	cmd.Flags().StringVar(&cfg.Target, "target", "", "target directory for codegen")
 	cmd.Flags().StringSliceVarP(&features, "feature", "", nil, "extend codegen with additional features")
 	cmd.Flags().StringSliceVarP(&templates, "template", "", nil, "external templates to execute")
+	// The --idtype flag predates the field.<Type>("id") option.
+	// See, https://entgo.io/docs/schema-fields#id-field.
+	cobra.CheckErr(cmd.Flags().MarkHidden("idtype"))
 	return cmd
 }
 
-// initEnv initialize an environment for ent codegen.
-func initEnv(target string, names []string) error {
-	if err := createDir(target); err != nil {
+// newEnv create a new environment for ent codegen.
+func newEnv(target string, prefix string, names []string, tmpl *template.Template) error {
+	if err := createDir(target, prefix); err != nil {
 		return fmt.Errorf("create dir %s: %w", target, err)
 	}
 	for _, name := range names {
 		if err := gen.ValidSchemaName(name); err != nil {
-			return fmt.Errorf("init schema %s: %w", name, err)
+			return fmt.Errorf("new schema %s: %w", name, err)
+		}
+		if fileExists(target, name) {
+			return fmt.Errorf("new schema %s: already exists", name)
 		}
 		b := bytes.NewBuffer(nil)
 		if err := tmpl.Execute(b, name); err != nil {
 			return fmt.Errorf("executing template %s: %w", name, err)
 		}
 		newFileTarget := filepath.Join(target, strings.ToLower(name+".go"))
-		if err := ioutil.WriteFile(newFileTarget, b.Bytes(), 0644); err != nil {
+		if err := os.WriteFile(newFileTarget, b.Bytes(), 0644); err != nil {
 			return fmt.Errorf("writing file %s: %w", newFileTarget, err)
 		}
 	}
 	return nil
 }
 
-func createDir(target string) error {
+func createDir(target string, prefix string) error {
 	_, err := os.Stat(target)
 	if err == nil || !os.IsNotExist(err) {
 		return err
@@ -208,17 +247,36 @@ func createDir(target string) error {
 	if target != defaultSchema {
 		return nil
 	}
-	if err := ioutil.WriteFile("ent/generate.go", []byte(genFile), 0644); err != nil {
+
+	// inject flags into the generate.go file template
+	flags := ""
+	if prefix != "" {
+		flags += " --prefix=" + prefix
+	}
+	genFile := fmt.Sprintf(genFileTpl, flags)
+
+	if err := os.WriteFile("ent/generate.go", []byte(genFile), 0644); err != nil {
 		return fmt.Errorf("creating generate.go file: %w", err)
 	}
+
 	return nil
 }
 
-// schema template for the "init" command.
-var tmpl = template.Must(template.New("schema").
-	Parse(`package schema
+func fileExists(target, name string) bool {
+	var _, err = os.Stat(filepath.Join(target, strings.ToLower(name+".go")))
 
-import "github.com/facebook/ent"
+	return err == nil
+}
+
+const (
+	// default schema package path.
+	defaultSchema = "ent/schema"
+	// ent/generate.go file used for "go generate" command.
+	genFileTpl = "package ent\n\n//go:generate go run -mod=mod entgo.io/ent/cmd/ent generate %s ./schema\n"
+	// schema template for the "init" command.
+	defaultTemplate = `package schema
+
+import "entgo.io/ent"
 
 // {{ . }} holds the schema definition for the {{ . }} entity.
 type {{ . }} struct {
@@ -234,13 +292,7 @@ func ({{ . }}) Fields() []ent.Field {
 func ({{ . }}) Edges() []ent.Edge {
 	return nil
 }
-`))
-
-const (
-	// default schema package path.
-	defaultSchema = "ent/schema"
-	// ent/generate.go file used for "go generate" command.
-	genFile = "package ent\n\n//go:generate go run github.com/facebook/ent/cmd/ent generate ./schema\n"
+`
 )
 
 // examples formats the given examples to the cli.

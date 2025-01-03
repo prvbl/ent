@@ -4,10 +4,16 @@ This source code is licensed under the Apache 2.0 license found
 in the LICENSE file in the root directory of this source tree.
 */}}
 
-{{/* constants needed for sql dialects. */}}
+{{/* gotype: entgo.io/ent/entc/gen.Type */}}
+
+{{/* Constants needed for sql dialects. */}}
 {{ define "dialect/sql/meta/constants" }}
 	{{- range $t := $.RelatedTypes }}
-		{{- if ne $t.ID.StorageKey $.ID.StorageKey }}
+		{{- $withEID := $.HasCompositeID }}
+		{{- if and (not $withEID) $t.HasOneFieldID }}
+			{{- if ne $t.ID.StorageKey $.ID.StorageKey }}{{ $withEID = true }}{{ end }}
+		{{- end }}
+		{{- if $withEID }}
 			// {{ $t.Name }}FieldID holds the string denoting the ID field of the {{ $t.Name }}.
 			{{ $t.Name }}FieldID = "{{ $t.ID.StorageKey }}"
 		{{- end }}
@@ -15,7 +21,7 @@ in the LICENSE file in the root directory of this source tree.
 	// Table holds the table name of the {{ lower $.Name }} in the database.
 	Table = "{{ $.Table }}"
 	{{- range $e := $.Edges }}
-		// {{ $e.TableConstant }} is the table the holds the {{ $e.Name }} relation/edge.
+		// {{ $e.TableConstant }} is the table that holds the {{ $e.Name }} relation/edge.
 		{{- if $e.M2M }} The primary key declared below.{{ end }}
 		{{ $e.TableConstant }} = "{{ $e.Rel.Table }}"
 		{{- if ne $.Table $e.Type.Table }}
@@ -28,20 +34,30 @@ in the LICENSE file in the root directory of this source tree.
 			{{ $e.ColumnConstant }} = "{{ $e.Rel.Column }}"
 		{{- end }}
 	{{- end }}
+	{{- with $tmpls := matchTemplate "dialect/sql/meta/constants/*" }}
+		{{- range $tmpl := $tmpls }}
+			{{- xtemplate $tmpl $ }}
+		{{- end }}
+	{{- end }}
 {{ end }}
 
-{{/* variables needed for sql dialects. */}}
+{{/* Variables needed for sql dialects. */}}
 {{ define "dialect/sql/meta/variables" }}
 	// Columns holds all SQL columns for {{ lower $.Name }} fields.
 	var Columns = []string{
-		{{ $.ID.Constant }},
+		{{- if $.HasOneFieldID }}
+			{{ $.ID.Constant }},
+		{{- end }}
 		{{- range $f := $.Fields }}
-			{{ $f.Constant }},
+			{{- if not $f.IsDeprecated }}
+				{{ $f.Constant }},
+			{{- end }}
 		{{- end }}
 	}
-	{{/* if any of the edges owns a foreign-key */}}
-	{{ with $.ForeignKeys }}
-		// ForeignKeys holds the SQL foreign-keys that are owned by the {{ $.Name }} type.
+	{{/* If any of the edges owns a foreign-key */}}
+	{{ with $.UnexportedForeignKeys }}
+		// ForeignKeys holds the SQL foreign-keys that are owned by the "{{ $.Table }}"
+		// table and are not defined as standalone fields in the schema.
 		var ForeignKeys = []string{
 			{{- range $fk := . }}
 				"{{ $fk.Edge.Rel.Column }}",
@@ -51,7 +67,7 @@ in the LICENSE file in the root directory of this source tree.
 
 	{{ with $.NumM2M }}
 		var (
-			{{- range $_, $e := $.Edges }}
+			{{- range $e := $.Edges }}
 				{{- if $e.M2M }}
 					// {{ $e.PKConstant }} and {{ $e.ColumnConstant }}2 are the table columns denoting the
 					// primary key for the {{ $e.Name }} relation (M2M).
@@ -62,7 +78,7 @@ in the LICENSE file in the root directory of this source tree.
 	{{ end }}
 {{ end }}
 
-{{/* functions needed for sql dialects. */}}
+{{/* Functions needed for sql dialects. */}}
 {{ define "dialect/sql/meta/functions" }}
 // ValidColumn reports if the column name is valid (part of the table columns).
 func ValidColumn(column string) bool {
@@ -71,13 +87,89 @@ func ValidColumn(column string) bool {
 			return true
 		}
 	}
-	{{- with $.ForeignKeys }}
+	{{- with $.UnexportedForeignKeys }}
 		for i := range ForeignKeys {
 			if column == ForeignKeys[i] {
 				return true
 			}
 		}
 	{{- end }}
+	{{- with $.DeprecatedFields }}
+		for _, f := range [...]string{ {{- range . }}{{ .Constant }},{{ end }} } {
+			if column == f {
+				return true
+			}
+		}
+	{{- end }}
 	return false
 }
+{{ end }}
+
+{{/* Type-safe order-by builders. */}}
+{{ define "dialect/sql/meta/order" }}
+	{{ if $.HasOneFieldID }}
+		// {{ $.ID.OrderName }} orders the results by the {{ $.ID.Name }} field.
+		func {{ $.ID.OrderName }}(opts ...sql.OrderTermOption) OrderOption {
+			return sql.OrderByField({{ $.ID.Constant }}, opts...).ToFunc()
+		}
+	{{ end }}
+	{{- range $f := $.Fields }}
+		{{- if $f.Type.Comparable }}
+			// {{ $f.OrderName }} orders the results by the {{ $f.Name }} field.
+			func {{ $f.OrderName }}(opts ...sql.OrderTermOption) OrderOption {
+				return sql.OrderByField({{ $f.Constant }}, opts...).ToFunc()
+			}
+		{{- end }}
+	{{- end }}
+	{{- range $e := $.Edges }}
+		{{- if $e.Unique }}
+			// {{ $e.OrderFieldName }} orders the results by {{ $e.Name }} field.
+			func {{ $e.OrderFieldName }}(field string, opts ...sql.OrderTermOption) OrderOption {
+				return func(s *sql.Selector) {
+					sqlgraph.OrderByNeighborTerms(s, new{{ pascal $e.Name }}Step(), sql.OrderByField(field, opts...))
+				}
+			}
+		{{- else }}
+			// {{ $e.OrderCountName }} orders the results by {{ $e.Name }} count.
+			func {{ $e.OrderCountName }}(opts ...sql.OrderTermOption) OrderOption {
+				return func(s *sql.Selector) {
+					sqlgraph.OrderByNeighborsCount(s, new{{ pascal $e.Name }}Step(), opts...)
+				}
+			}
+
+			// {{ $e.OrderTermsName }} orders the results by {{ $e.Name }} terms.
+			func {{ $e.OrderTermsName }}(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+				return func(s *sql.Selector) {
+					sqlgraph.OrderByNeighborTerms(s, new{{ pascal $e.Name }}Step(), append([]sql.OrderTerm{term}, terms...)...)
+				}
+			}
+		{{- end }}
+	{{- end }}
+	{{- range $e := $.Edges }}
+		func new{{ pascal $e.Name }}Step() *sqlgraph.Step {
+			return sqlgraph.NewStep(
+				{{- if $.HasCompositeID }}
+					{{- /* Query that goes from the edge schema. */}}
+					sqlgraph.From(Table, {{ $e.ColumnConstant }}),
+					sqlgraph.To({{ $e.InverseTableConstant }}, {{ print $e.Type.Name "FieldID" }}),
+				{{- else }}
+					sqlgraph.From(Table, {{ $.ID.Constant }}),
+					{{- if $e.Type.HasOneFieldID }}
+						{{- $refid := $.ID.Constant }}{{ if ne $e.Type.ID.StorageKey $.ID.StorageKey }}{{ $refid = print $e.Type.Name "FieldID" }}{{ end }}
+						sqlgraph.To({{ if ne $.Table $e.Type.Table }}{{ $e.InverseTableConstant }}{{ else }}Table{{ end }}, {{ $refid }}),
+					{{- else }}
+						{{- /* Query that goes to the edge schema. */}}
+						sqlgraph.To({{ if ne $.Table $e.Type.Table }}{{ $e.InverseTableConstant }}{{ else }}Table{{ end }}, {{ $e.ColumnConstant }}),
+					{{- end }}
+				{{- end }}
+				sqlgraph.Edge(sqlgraph.{{ $e.Rel.Type }}, {{ $e.IsInverse }}, {{ $e.TableConstant }},
+					{{- if $e.M2M -}}
+						{{ $e.PKConstant }}...
+					{{- else -}}
+						{{ $e.ColumnConstant }}
+					{{- end -}}
+				),
+			)
+		}
+	{{- end }}
 {{ end }}

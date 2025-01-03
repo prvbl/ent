@@ -5,9 +5,9 @@
 package schema
 
 import (
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/dialect"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent"
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/schema/field"
 )
 
 // CustomType holds the schema definition for the CustomType entity.
@@ -22,6 +22,18 @@ func (CustomType) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{
 				dialect.Postgres: "customtype",
+			}),
+		field.Time("tz0").
+			Optional().
+			SchemaType(map[string]string{
+				dialect.MySQL:    "timestamp(0)",
+				dialect.Postgres: "timestamptz(0)",
+			}),
+		field.Time("tz3").
+			Optional().
+			SchemaType(map[string]string{
+				dialect.MySQL:    "timestamp(3)",
+				dialect.Postgres: "timestamptz(3)",
 			}),
 	}
 }

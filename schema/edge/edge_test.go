@@ -7,9 +7,9 @@ package edge_test
 import (
 	"testing"
 
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/schema"
-	"github.com/facebook/ent/schema/edge"
+	"entgo.io/ent"
+	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,8 +20,10 @@ func TestEdge(t *testing.T) {
 	type User struct{ ent.Schema }
 	e := edge.To("friends", User.Type).
 		Required().
+		Comment("comment").
 		Descriptor()
 	assert.False(e.Inverse)
+	assert.Equal("comment", e.Comment)
 	assert.Equal("User", e.Type)
 	assert.Equal("friends", e.Name)
 	assert.True(e.Required)
@@ -29,12 +31,24 @@ func TestEdge(t *testing.T) {
 	type Node struct{ ent.Schema }
 	e = edge.To("parent", Node.Type).
 		Unique().
+		Immutable().
 		Descriptor()
 	assert.False(e.Inverse)
 	assert.True(e.Unique)
 	assert.Equal("Node", e.Type)
 	assert.Equal("parent", e.Name)
 	assert.False(e.Required)
+	assert.True(e.Immutable)
+
+	e = edge.To("children", Node.Type).
+		From("parent").
+		Unique().
+		Comment("comment").
+		Field("parent_id").
+		Descriptor()
+	assert.Equal("parent_id", e.Field)
+	assert.Equal("comment", e.Comment)
+	assert.Empty(e.Ref.Field)
 
 	t.Log("m2m relation of the same type")
 	from := edge.To("following", User.Type).
@@ -78,13 +92,13 @@ func TestEdge(t *testing.T) {
 
 	from = edge.To("following", User.Type).
 		StructTag("following").
-		StorageKey(edge.Table("user_followers"), edge.Columns("following_id", "followers_id")).
+		StorageKey(edge.Table("user_followers"), edge.Columns("following_id", "followers_id"), edge.Symbol("users_followers")).
 		From("followers").
 		StructTag("followers").
 		Descriptor()
 	assert.Equal("followers", from.Tag)
 	assert.Equal("following", from.Ref.Tag)
-	assert.Equal(edge.StorageKey{Table: "user_followers", Columns: []string{"following_id", "followers_id"}}, *from.Ref.StorageKey)
+	assert.Equal(edge.StorageKey{Table: "user_followers", Symbols: []string{"users_followers"}, Columns: []string{"following_id", "followers_id"}}, *from.Ref.StorageKey)
 }
 
 type GQL struct {

@@ -4,6 +4,8 @@ This source code is licensed under the Apache 2.0 license found
 in the LICENSE file in the root directory of this source tree.
 */}}
 
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+
 {{ define "hook" }}
 
 {{ with extend $ "Package" "hook" }}
@@ -14,7 +16,7 @@ import "{{ $.Config.Package }}"
 
 {{ $pkg := base $.Config.Package }}
 
-{{ range $n := $.Nodes }}
+{{ range $n := $.MutableNodes }}
 	{{ $name := print $n.Name "Func" }}
 	{{ $type := printf "*%s.%s" $pkg $n.MutationName }}
 
@@ -24,11 +26,10 @@ import "{{ $.Config.Package }}"
 
 	// Mutate calls f(ctx, m).
 	func (f {{ $name }}) Mutate(ctx context.Context, m {{ $pkg }}.Mutation) ({{ $pkg }}.Value, error) {
-		mv, ok := m.({{ $type }})
-		if !ok {
-			return nil, fmt.Errorf("unexpected mutation type %T. expect {{ $type }}", m)
+		if mv, ok := m.({{ $type }}); ok {
+			return f(ctx, mv)
 		}
-		return f(ctx, mv)
+		return nil, fmt.Errorf("unexpected mutation type %T. expect {{ $type }}", m)
 	}
 {{ end }}
 

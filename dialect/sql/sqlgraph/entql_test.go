@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/facebook/ent/dialect"
-	"github.com/facebook/ent/dialect/sql"
-	"github.com/facebook/ent/entql"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/entql"
+	"entgo.io/ent/schema/field"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,55 +78,55 @@ func TestGraph_EvalP(t *testing.T) {
 		s         *sql.Selector
 		p         entql.P
 		wantQuery string
-		wantArgs  []interface{}
+		wantArgs  []any
 		wantErr   bool
 	}{
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
 			p:         entql.FieldHasPrefix("name", "a"),
-			wantQuery: `SELECT * FROM "users" WHERE "name" LIKE $1`,
-			wantArgs:  []interface{}{"a%"},
+			wantQuery: `SELECT * FROM "users" WHERE "users"."name" LIKE $1`,
+			wantArgs:  []any{"a%"},
 		},
 		{
 			s: sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")).
 				Where(sql.EQ("age", 1)),
 			p:         entql.FieldHasPrefix("name", "a"),
-			wantQuery: `SELECT * FROM "users" WHERE "age" = $1 AND "name" LIKE $2`,
-			wantArgs:  []interface{}{1, "a%"},
+			wantQuery: `SELECT * FROM "users" WHERE "age" = $1 AND "users"."name" LIKE $2`,
+			wantArgs:  []any{1, "a%"},
 		},
 		{
 			s: sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")).
 				Where(sql.EQ("age", 1)),
 			p:         entql.FieldHasPrefix("name", "a"),
-			wantQuery: `SELECT * FROM "users" WHERE "age" = $1 AND "name" LIKE $2`,
-			wantArgs:  []interface{}{1, "a%"},
+			wantQuery: `SELECT * FROM "users" WHERE "age" = $1 AND "users"."name" LIKE $2`,
+			wantArgs:  []any{1, "a%"},
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
 			p:         entql.EQ(entql.F("name"), entql.F("last")),
-			wantQuery: `SELECT * FROM "users" WHERE "name" = "last"`,
+			wantQuery: `SELECT * FROM "users" WHERE "users"."name" = "users"."last"`,
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
 			p:         entql.EQ(entql.F("name"), entql.F("last")),
-			wantQuery: `SELECT * FROM "users" WHERE "name" = "last"`,
+			wantQuery: `SELECT * FROM "users" WHERE "users"."name" = "users"."last"`,
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
 			p:         entql.And(entql.FieldNil("name"), entql.FieldNotNil("last")),
-			wantQuery: `SELECT * FROM "users" WHERE "name" IS NULL AND "last" IS NOT NULL`,
+			wantQuery: `SELECT * FROM "users" WHERE "users"."name" IS NULL AND "users"."last" IS NOT NULL`,
 		},
 		{
 			s: sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")).
 				Where(sql.EQ("foo", "bar")),
 			p:         entql.Or(entql.FieldEQ("name", "foo"), entql.FieldEQ("name", "baz")),
-			wantQuery: `SELECT * FROM "users" WHERE "foo" = $1 AND ("name" = $2 OR "name" = $3)`,
-			wantArgs:  []interface{}{"bar", "foo", "baz"},
+			wantQuery: `SELECT * FROM "users" WHERE "foo" = $1 AND ("users"."name" = $2 OR "users"."name" = $3)`,
+			wantArgs:  []any{"bar", "foo", "baz"},
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
 			p:         entql.HasEdge("pets"),
-			wantQuery: `SELECT * FROM "users" WHERE "users"."uid" IN (SELECT "pets"."owner_id" FROM "pets" WHERE "pets"."owner_id" IS NOT NULL)`,
+			wantQuery: `SELECT * FROM "users" WHERE EXISTS (SELECT "pets"."owner_id" FROM "pets" WHERE "users"."uid" = "pets"."owner_id")`,
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
@@ -136,28 +136,27 @@ func TestGraph_EvalP(t *testing.T) {
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")),
 			p:         entql.HasEdgeWith("pets", entql.Or(entql.FieldEQ("name", "pedro"), entql.FieldEQ("name", "xabi"))),
-			wantQuery: `SELECT * FROM "users" WHERE "users"."uid" IN (SELECT "pets"."owner_id" FROM "pets" WHERE "name" = $1 OR "name" = $2)`,
-			wantArgs:  []interface{}{"pedro", "xabi"},
+			wantQuery: `SELECT * FROM "users" WHERE EXISTS (SELECT "pets"."owner_id" FROM "pets" WHERE "users"."uid" = "pets"."owner_id" AND ("pets"."name" = $1 OR "pets"."name" = $2))`,
+			wantArgs:  []any{"pedro", "xabi"},
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")).Where(sql.EQ("active", true)),
 			p:         entql.HasEdgeWith("groups", entql.Or(entql.FieldEQ("name", "GitHub"), entql.FieldEQ("name", "GitLab"))),
-			wantQuery: `SELECT * FROM "users" WHERE "active" = $1 AND "users"."uid" IN (SELECT "user_groups"."user_id" FROM "user_groups" JOIN "groups" AS "t0" ON "user_groups"."group_id" = "t0"."gid" WHERE "name" = $2 OR "name" = $3)`,
-			wantArgs:  []interface{}{true, "GitHub", "GitLab"},
+			wantQuery: `SELECT * FROM "users" WHERE "active" AND "users"."uid" IN (SELECT "user_groups"."user_id" FROM "user_groups" JOIN "groups" AS "t1" ON "user_groups"."group_id" = "t1"."gid" WHERE "t1"."name" = $1 OR "t1"."name" = $2)`,
+			wantArgs:  []any{"GitHub", "GitLab"},
 		},
 		{
 			s:         sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")).Where(sql.EQ("active", true)),
 			p:         entql.And(entql.HasEdge("pets"), entql.HasEdge("groups"), entql.EQ(entql.F("name"), entql.F("uid"))),
-			wantQuery: `SELECT * FROM "users" WHERE "active" = $1 AND ("users"."uid" IN (SELECT "pets"."owner_id" FROM "pets" WHERE "pets"."owner_id" IS NOT NULL) AND "users"."uid" IN (SELECT "user_groups"."user_id" FROM "user_groups") AND "name" = "uid")`,
-			wantArgs:  []interface{}{true},
+			wantQuery: `SELECT * FROM "users" WHERE "active" AND (EXISTS (SELECT "pets"."owner_id" FROM "pets" WHERE "users"."uid" = "pets"."owner_id") AND "users"."uid" IN (SELECT "user_groups"."user_id" FROM "user_groups") AND "users"."name" = "users"."uid")`,
 		},
 		{
 			s: sql.Dialect(dialect.Postgres).Select().From(sql.Table("users")).Where(sql.EQ("active", true)),
 			p: entql.HasEdgeWith("pets", entql.FieldEQ("name", "pedro"), WrapFunc(func(s *sql.Selector) {
 				s.Where(sql.EQ("owner_id", 10))
 			})),
-			wantQuery: `SELECT * FROM "users" WHERE "active" = $1 AND "users"."uid" IN (SELECT "pets"."owner_id" FROM "pets" WHERE "name" = $2 AND "owner_id" = $3)`,
-			wantArgs:  []interface{}{true, "pedro", 10},
+			wantQuery: `SELECT * FROM "users" WHERE "active" AND EXISTS (SELECT "pets"."owner_id" FROM "pets" WHERE ("users"."uid" = "pets"."owner_id" AND "pets"."name" = $1) AND "owner_id" = $2)`,
+			wantArgs:  []any{"pedro", 10},
 		},
 	}
 	for i, tt := range tests {

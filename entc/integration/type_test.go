@@ -13,13 +13,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/facebook/ent/dialect/sql"
-	"github.com/facebook/ent/entc/integration/ent"
-	"github.com/facebook/ent/entc/integration/ent/fieldtype"
-	"github.com/facebook/ent/entc/integration/ent/role"
-	"github.com/facebook/ent/entc/integration/ent/schema"
-	"github.com/facebook/ent/entc/integration/ent/task"
+	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/entc/integration/ent"
+	"entgo.io/ent/entc/integration/ent/fieldtype"
+	"entgo.io/ent/entc/integration/ent/role"
+	"entgo.io/ent/entc/integration/ent/schema"
+	"entgo.io/ent/entc/integration/ent/schema/task"
+	enttask "entgo.io/ent/entc/integration/ent/task"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +31,9 @@ func Types(t *testing.T, client *ent.Client) {
 
 	link, err := url.Parse("localhost")
 	require.NoError(err)
+
+	bigint := schema.NewBigInt(0)
+	require.NoError(bigint.Scan("1000"))
 
 	ft := client.FieldType.Create().
 		SetInt(1).
@@ -44,6 +49,9 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal(int16(16), ft.Int16)
 	require.Equal(int32(32), ft.Int32)
 	require.Equal(int64(64), ft.Int64)
+	require.Nil(ft.NullLink)
+	require.Nil(ft.NilPair)
+	require.Nil(ft.Deleted)
 
 	ft = client.FieldType.Create().
 		SetInt(1).
@@ -61,12 +69,18 @@ func Types(t *testing.T, client *ent.Client) {
 		SetNillableInt64(math.MinInt64).
 		SetDir("dir").
 		SetNdir("ndir").
-		SetNullStr(sql.NullString{String: "not-default", Valid: true}).
+		SetNullStr(&sql.NullString{String: "not-default", Valid: true}).
 		SetLink(schema.Link{URL: link}).
-		SetLinkOther(schema.Link{URL: link}).
-		SetNullLink(schema.Link{URL: link}).
+		SetLinkOther(&schema.Link{URL: link}).
+		SetNullLink(&schema.Link{URL: link}).
 		SetRole(role.Admin).
+		SetPriority(role.High).
 		SetDuration(time.Hour).
+		SetPair(schema.Pair{K: []byte("K"), V: []byte("V")}).
+		SetNilPair(&schema.Pair{K: []byte("K"), V: []byte("V")}).
+		SetStringArray([]string{"foo", "bar", "baz"}).
+		SetBigInt(bigint).
+		SetRawData([]byte{1, 2, 3}).
 		SaveX(ctx)
 
 	require.Equal(int8(math.MinInt8), ft.OptionalInt8)
@@ -77,6 +91,7 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal(int16(math.MinInt16), *ft.NillableInt16)
 	require.Equal(int32(math.MinInt32), *ft.NillableInt32)
 	require.Equal(int64(math.MinInt64), *ft.NillableInt64)
+	require.Equal([]byte{1, 2, 3}, ft.RawData)
 	require.Equal(http.Dir("dir"), ft.Dir)
 	require.NotNil(*ft.Ndir)
 	require.Equal(http.Dir("ndir"), *ft.Ndir)
@@ -87,16 +102,54 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal("localhost", ft.NullLink.String())
 	require.Equal(net.IP("127.0.0.1").String(), ft.IP.String())
 	mac, err := net.ParseMAC("3b:b3:6b:3c:10:79")
+	require.Equal(role.Admin, ft.Role)
+	require.Equal(role.High, ft.Priority)
 	require.NoError(err)
 	dt, err := time.Parse(time.RFC3339, "1906-01-02T00:00:00+00:00")
 	require.NoError(err)
+	require.Equal(schema.Pair{K: []byte("K"), V: []byte("V")}, ft.Pair)
+	require.Equal(&schema.Pair{K: []byte("K"), V: []byte("V")}, ft.NilPair)
+	require.EqualValues([]string{"foo", "bar", "baz"}, ft.StringArray)
+	require.Equal("1000", ft.BigInt.String())
+	exists, err := client.FieldType.Query().Where(fieldtype.DurationLT(time.Hour * 2)).Exist(ctx)
+	require.NoError(err)
+	require.True(exists)
+	exists, err = client.FieldType.Query().Where(fieldtype.DurationLT(time.Hour)).Exist(ctx)
+	require.NoError(err)
+	require.False(exists)
+	require.Equal("127.0.0.1", ft.LinkOtherFunc.String())
+	require.False(ft.DeletedAt.Time.IsZero())
 
+	ft = client.FieldType.UpdateOne(ft).AddOptionalUint64(10).SaveX(ctx)
+	require.EqualValues(10, ft.OptionalUint64)
+	ft = client.FieldType.UpdateOne(ft).AddOptionalUint64(20).SetOptionalUint64(5).SaveX(ctx)
+	require.EqualValues(5, ft.OptionalUint64)
+	ft = client.FieldType.UpdateOne(ft).AddOptionalUint64(-5).SaveX(ctx)
+	require.Zero(ft.OptionalUint64)
+
+	err = client.FieldType.Create().
+		SetInt(1).
+		SetInt8(8).
+		SetInt16(16).
+		SetInt32(32).
+		SetInt64(64).
+		SetRawData(make([]byte, 40)).
+		Exec(ctx)
+	require.Error(err, "MaxLen validator should reject this operation")
+	err = client.FieldType.Create().
+		SetInt(1).
+		SetInt8(8).
+		SetInt16(16).
+		SetInt32(32).
+		SetInt64(64).
+		SetRawData(make([]byte, 2)).
+		Exec(ctx)
+	require.Error(err, "MinLen validator should reject this operation")
 	ft = ft.Update().
 		SetInt(1).
 		SetInt8(math.MaxInt8).
 		SetInt16(math.MaxInt16).
 		SetInt32(math.MaxInt16).
-		SetInt64(math.MaxInt16).
 		SetOptionalInt8(math.MaxInt8).
 		SetOptionalInt16(math.MaxInt16).
 		SetOptionalInt32(math.MaxInt32).
@@ -110,14 +163,18 @@ func Types(t *testing.T, client *ent.Client) {
 		SetDir("dir").
 		SetNdir("ndir").
 		SetStr(sql.NullString{String: "str", Valid: true}).
-		SetNullStr(sql.NullString{String: "str", Valid: true}).
+		SetNullStr(&sql.NullString{String: "str", Valid: true}).
 		SetLink(schema.Link{URL: link}).
-		SetNullLink(schema.Link{URL: link}).
-		SetLinkOther(schema.Link{URL: link}).
+		SetNullLink(&schema.Link{URL: link}).
+		SetLinkOther(&schema.Link{URL: link}).
 		SetSchemaInt(64).
 		SetSchemaInt8(8).
 		SetSchemaInt64(64).
 		SetMAC(schema.MAC{HardwareAddr: mac}).
+		SetPair(schema.Pair{K: []byte("K1"), V: []byte("V1")}).
+		SetNilPair(&schema.Pair{K: []byte("K1"), V: []byte("V1")}).
+		SetStringArray([]string{"qux"}).
+		AddBigInt(bigint).
 		SaveX(ctx)
 
 	require.Equal(int8(math.MaxInt8), ft.OptionalInt8)
@@ -142,30 +199,32 @@ func Types(t *testing.T, client *ent.Client) {
 	require.Equal(schema.Int8(8), ft.SchemaInt8)
 	require.Equal(schema.Int64(64), ft.SchemaInt64)
 	require.Equal(mac.String(), ft.MAC.String())
+	require.Equal(schema.Pair{K: []byte("K1"), V: []byte("V1")}, ft.Pair)
+	require.Equal(&schema.Pair{K: []byte("K1"), V: []byte("V1")}, ft.NilPair)
+	require.EqualValues([]string{"qux"}, ft.StringArray)
+	require.Nil(ft.NillableUUID)
+	require.Equal(uuid.UUID{}, ft.OptionalUUID)
+	require.Equal("2000", ft.BigInt.String())
+	require.EqualValues(100, ft.Int64, "UpdateDefault sets the value to 100")
+	require.EqualValues(100, ft.Duration, "UpdateDefault sets the value to 100ns")
+	require.False(ft.DeletedAt.Time.IsZero())
 
-	exists, err := client.FieldType.Query().Where(fieldtype.DurationLT(time.Hour * 2)).Exist(ctx)
+	err = client.Task.CreateBulk(
+		client.Task.Create().SetPriority(task.PriorityLow),
+		client.Task.Create().SetPriority(task.PriorityMid),
+		client.Task.Create().SetPriority(task.PriorityHigh),
+	).Exec(ctx)
 	require.NoError(err)
-	require.True(exists)
-	exists, err = client.FieldType.Query().Where(fieldtype.DurationLT(time.Hour)).Exist(ctx)
-	require.NoError(err)
-	require.False(exists)
-
-	_, err = client.Task.CreateBulk(
-		client.Task.Create().SetPriority(schema.PriorityLow),
-		client.Task.Create().SetPriority(schema.PriorityMid),
-		client.Task.Create().SetPriority(schema.PriorityHigh),
-	).Save(ctx)
-	require.NoError(err)
-	_, err = client.Task.Create().SetPriority(schema.Priority(10)).Save(ctx)
+	err = client.Task.Create().SetPriority(task.Priority(10)).Exec(ctx)
 	require.Error(err)
 
-	tasks := client.Task.Query().Order(ent.Asc(task.FieldPriority)).AllX(ctx)
-	require.Equal(schema.PriorityLow, tasks[0].Priority)
-	require.Equal(schema.PriorityMid, tasks[1].Priority)
-	require.Equal(schema.PriorityHigh, tasks[2].Priority)
+	tasks := client.Task.Query().Order(ent.Asc(enttask.FieldPriority)).AllX(ctx)
+	require.Equal(task.PriorityLow, tasks[0].Priority)
+	require.Equal(task.PriorityMid, tasks[1].Priority)
+	require.Equal(task.PriorityHigh, tasks[2].Priority)
 
-	tasks = client.Task.Query().Order(ent.Desc(task.FieldPriority)).AllX(ctx)
-	require.Equal(schema.PriorityLow, tasks[2].Priority)
-	require.Equal(schema.PriorityMid, tasks[1].Priority)
-	require.Equal(schema.PriorityHigh, tasks[0].Priority)
+	tasks = client.Task.Query().Order(ent.Desc(enttask.FieldPriority)).AllX(ctx)
+	require.Equal(task.PriorityLow, tasks[2].Priority)
+	require.Equal(task.PriorityMid, tasks[1].Priority)
+	require.Equal(task.PriorityHigh, tasks[0].Priority)
 }

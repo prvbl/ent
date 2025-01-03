@@ -5,9 +5,9 @@
 package schema
 
 import (
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/schema/edge"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
 )
 
 // Pet holds the schema definition for the Pet entity.
@@ -20,6 +20,8 @@ func (Pet) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("name").
 			Default("unknown"),
+		field.Int("owner_id").
+			Optional(),
 	}
 }
 
@@ -28,6 +30,7 @@ func (Pet) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.From("owner", User.Type).
 			Ref("pets").
+			Field("owner_id").
 			Unique(),
 	}
 }

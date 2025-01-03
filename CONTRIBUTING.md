@@ -6,6 +6,7 @@ possible.
 
 - `dialect` - Contains SQL and Gremlin code used by the generated code.
   - `dialect/sql/schema` - Auto migration logic resides there.
+  - `dialect/sql/sqljson` - JSON extension for SQL.
 
 - `schema` - User schema API.
   - `schema/{field, edge, index, mixin}` - provides schema builders API.
@@ -15,7 +16,7 @@ possible.
   - `entc/load` - `entc` loader API for loading user schemas into a Go objects at runtime.
   - `entc/gen` - The actual code generation logic resides in this package (and its `templates` package).
   - `integration` - Integration tests for `entc`.
-  
+
 - `privacy` - Runtime code for [privacy layer](https://entgo.io/docs/privacy/).
 
 - `doc` - Documentation code for `entgo.io` (uses [Docusaurus](https://docusaurus.io)).
@@ -25,16 +26,17 @@ possible.
   In order to test your documentation changes, run `npm start` from the `doc/website` directory, and open [localhost:3000](http://localhost:3000/).
 
 # Run integration tests
-If you touch any file in `entc`, run the following command in `entc/integration`:
+If you touch any file in `entc`, run the following commands in `entc/integration` and 'examples' dirs:
 
 ```
 go generate ./...
+go mod tidy
 ```
 
-Then, run `docker-compose` in order to spin-up all database containers:
+Then, in `entc/integration` run `docker-compose` in order to spin-up all database containers:
 
 ```
-docker-compose -f compose/docker-compose.yaml up -d --scale test=0
+docker-compose -f docker-compose.yaml up -d
 ```
 
 Then, run `go test ./...` to run all integration tests.

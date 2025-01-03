@@ -4,6 +4,8 @@ This source code is licensed under the Apache 2.0 license found
 in the LICENSE file in the root directory of this source tree.
 */}}
 
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+
 {{/*
 The runtime template generates the schema-stitching logic and holds the
 module version that was used to generate the assets.
@@ -42,7 +44,7 @@ backwards-compatibility with previous versions of ent.
 
 {{ $hooks := 0 }}
 {{ range $n := $.Nodes }}
-	{{ $numHooks := $n.NumHooks }}{{ if $n.NumPolicy }}{{ $numHooks = add $numHooks 1 }}{{ end }}
+	{{ $numHooks := add $n.NumHooks $n.NumInterceptors }}{{ if $n.NumPolicy }}{{ $numHooks = add $numHooks 1 }}{{ end }}
 	{{ $hooks = add $hooks $numHooks }}
 {{ end }}
 {{ $rtpkg := false }}{{ if hasField $ "Scope" }}{{ $rtpkg = eq $.Scope.Package "runtime" }}{{ end }}
@@ -66,17 +68,21 @@ backwards-compatibility with previous versions of ent.
 {{/* register schema handlers to type packages */}}
 {{ define "runtime/register" }}
 import (
+	"time"
+	"context"
+
 	{{- with $.Config.Schema }}
 		"{{ . }}"
 	{{- end }}
 	{{- range $n := $.Nodes }}
-		"{{ $.Config.Package }}/{{ $n.Package }}"
+		{{ $n.PackageAlias }} "{{ $.Config.Package }}/{{ $n.PackageDir }}"
 		{{- /* Import external packages */}}
 		{{- template "import/types" $n }}
 	{{- end }}
 
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/privacy"
+	"entgo.io/ent"
+	"entgo.io/ent/privacy"
+	"entgo.io/ent/schema/field"
 )
 
 
@@ -91,7 +97,7 @@ func init() {
 		{{ $pkg }}Mixin := {{ $schema }}.{{ $n.Name }}{}.Mixin()
 	{{- end }}
 	{{- with $policies := $n.PolicyPositions }}
-		{{- /* policies defined in schema and mixins. */}}
+		{{- /* Policies defined in schema and mixins. */}}
 		{{ $pkg }}.Policy = privacy.NewPolicies({{ range $idx := $n.MixedInPolicies }}{{ $pkg }}Mixin[{{ $idx }}],{{ end }}{{ $schema }}.{{ $n.Name }}{})
 		{{ $pkg }}.Hooks[0] = func(next ent.Mutator) ent.Mutator {
 			return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
@@ -125,14 +131,34 @@ func init() {
 			{{- end }}
 		{{- end }}
 	{{- end }}
-	{{- if or $n.HasDefault $n.HasValidators }}
+	{{- with $inters := $n.InterceptorPositions }}
+		{{- /* Interceptors defined in schema mixins. */}}
+		{{- with $idx := $n.MixedInInterceptors }}
+			{{- range $i := $idx }}
+				{{ print $pkg "MixinInters" $i }} := {{ $pkg }}Mixin[{{ $i }}].Interceptors()
+			{{- end }}
+		{{- end }}
+		{{- /* If there are interceptors defined in the schema. */}}
+		{{- $schemaInters := false }}{{ range $p := $inters }}{{ if not $p.MixedIn }}{{ $schemaInters = true }}{{ end }}{{ end }}
+		{{- if $schemaInters }}
+			{{ print $pkg "Inters" }} := {{ $schema }}.{{ $n.Name }}{}.Interceptors()
+		{{- end }}
+		{{- range $i, $p := $inters }}
+			{{- if $p.MixedIn }}
+				{{ print $pkg ".Interceptors" }}[{{ $i }}] =  {{ print $pkg "MixinInters" $p.MixinIndex }}[{{ $p.Index }}]
+			{{- else }}
+				{{ print $pkg ".Interceptors" }}[{{ $i }}] = {{ print $pkg "Inters" }}[{{ $p.Index }}]
+			{{- end }}
+		{{- end }}
+	{{- end }}
+	{{- if or $n.HasDefault $n.HasUpdateDefault $n.HasValidators $n.HasValueScanner }}
 		{{- with $idx := $n.MixedInFields }}
 			{{- range $i := $idx }}
 				{{ print $pkg "MixinFields" $i }} := {{ $pkg }}Mixin[{{ $i }}].Fields()
 				_ = {{ $pkg }}MixinFields{{ $i }}
 			{{- end }}
 		{{- end }}
-		{{- $fields := $n.Fields }}{{ if $n.ID.UserDefined }}{{ $fields = append $fields $n.ID }}{{ end }}
+		{{- $fields := $n.Fields }}{{ if $n.HasOneFieldID }}{{ if $n.ID.UserDefined }}{{ $fields = append $fields $n.ID }}{{ end }}{{ end }}
 		{{- with $fields }}
 			{{ $pkg }}Fields := {{ $schema }}.{{ $n.Name }}{}.Fields()
 			_ = {{ $pkg }}Fields
@@ -140,7 +166,7 @@ func init() {
 		{{- range $i, $f := $fields }}
 			{{- $desc := print $pkg "Desc" $f.StructField }}
 			{{- /* enum default values handled near their declarations (in type package). */}}
-			{{- if or (and $f.Default (not $f.IsEnum)) $f.UpdateDefault $f.Validators }}
+			{{- if or (and $f.Default (not $f.IsEnum)) $f.UpdateDefault $f.Validators $f.HasValueScanner }}
 				// {{ $desc }} is the schema descriptor for {{ $f.Name }} field.
 				{{- if $f.Position.MixedIn }}
 					{{ $desc }} := {{ print $pkg "MixinFields" $f.Position.MixinIndex }}[{{ $f.Position.Index }}].Descriptor()
@@ -153,7 +179,11 @@ func init() {
 				// {{ $default }} holds the default value on creation for the {{ $f.Name }} field.
 				{{- $defaultType := print $f.Type.Type }}{{ if $f.DefaultFunc }}{{ $defaultType = print "func() " $f.Type }}{{ end }}
 				{{- if and $f.HasGoType (not (hasPrefix $defaultType "func")) }}
-					{{ $default }} = {{ $f.Type }}({{ $desc }}.Default.({{ $defaultType }}))
+					{{- if or $f.IsJSON $f.IsOther }}
+						{{ $default }} = {{ $desc }}.Default.({{ $f.Type }})
+					{{- else }}
+						{{ $default }} = {{ $f.Type }}({{ $desc }}.Default.({{ $defaultType }}))
+					{{- end }}
 				{{- else }}
 					{{ $default }} = {{ $desc }}.Default.({{ $defaultType }})
 				{{- end }}
@@ -161,23 +191,30 @@ func init() {
 			{{- if $f.UpdateDefault }}
 				{{- $default := print $pkg "." $f.UpdateDefaultName }}
 				// {{ $default }} holds the default value on update for the {{ $f.Name }} field.
-				{{ $default }} = {{ $desc }}.UpdateDefault.({{ if $f.IsTime }}func() {{ end }}{{ $f.Type }})
+				{{ $default }} = {{ $desc }}.UpdateDefault.(func() {{ $f.Type }})
+			{{- end }}
+			{{- with $f.HasValueScanner }}
+				{{- $valuescan := print $pkg ".ValueScanner." $f.StructField }}
+				{{ $valuescan }} = {{ $desc }}.ValueScanner.(field.TypeValueScanner[{{ $f.Type }}])
 			{{- end }}
 			{{- with $f.Validators }}
 				{{- $name := print $pkg "." $f.Validator }}
-				{{- $type :=  printf "func (%s) error" $f.Type.Type }}
+				{{- $type := $f.Type.Type.String }}
+				{{- if $f.IsJSON }}
+					{{- $type = $f.Type.String }}
+				{{- end }}
 				// {{ $name }} is a validator for the "{{ $f.Name }}" field. It is called by the builders before save.
 				{{- if eq $f.Validators 1 }}
-					{{ $name }} = {{ $desc }}.Validators[0].({{ $type }})
+					{{ $name }} = {{ $desc }}.Validators[0].({{ printf "func (%s) error" $type }})
 				{{- else }}
-					{{ $name }} = func() {{ $type }} {
+					{{ $name }} = func() {{ printf "func (%s) error" $type }} {
 						validators := {{ $desc }}.Validators
-						fns := [...]func({{ $f.Type }}) error {
+						fns := [...]func({{ $f.Type.Type }}) error {
 							{{- range $j, $n := xrange $f.Validators }}
 								validators[{{ $j }}].(func({{ $f.Type.Type }}) error),
 							{{- end }}
 						}
-						return func({{ $f.BuilderField }} {{ $f.Type }}) error {
+						return func({{ $f.BuilderField }} {{ $f.Type.Type }}) error {
 							for _, fn := range fns {
 								if err := fn({{ $f.BuilderField }}); err != nil {
 									return err

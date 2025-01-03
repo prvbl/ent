@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/schema/edge"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
 )
 
 // CheckError is returned by the validators.
@@ -43,7 +43,7 @@ func (Group) Fields() []ent.Field {
 			Positive().
 			Default(10),
 		field.String("name").
-			Comment("field with multiple validators").
+			Comment("Name field with multiple validators").
 			Match(regexp.MustCompile("[a-zA-Z_]+$")).
 			Validate(func(s string) error {
 				if strings.ToLower(s) == s {

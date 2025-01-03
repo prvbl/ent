@@ -6,12 +6,12 @@ package main
 
 import (
 	"bytes"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 
-	"github.com/facebook/ent/cmd/internal/base"
-	"github.com/facebook/ent/entc/gen"
+	"entgo.io/ent/cmd/internal/base"
+	"entgo.io/ent/entc/gen"
 
 	"github.com/spf13/cobra"
 )
@@ -20,9 +20,10 @@ func main() {
 	log.SetFlags(0)
 	cmd := &cobra.Command{Use: "entc"}
 	cmd.AddCommand(
-		base.InitCmd(),
+		base.NewCmd(),
 		base.DescribeCmd(),
 		base.GenerateCmd(migrate),
+		base.InitCmd(),
 	)
 	_ = cmd.Execute()
 }
@@ -30,11 +31,11 @@ func main() {
 func migrate(c *gen.Config) {
 	var (
 		target = filepath.Join(c.Target, "generate.go")
-		oldCmd = []byte("github.com/facebook/ent/cmd/entc")
+		oldCmd = []byte("entgo.io/ent/cmd/entc")
 	)
-	buf, err := ioutil.ReadFile(target)
+	buf, err := os.ReadFile(target)
 	if err != nil || !bytes.Contains(buf, oldCmd) {
 		return
 	}
-	_ = ioutil.WriteFile(target, bytes.ReplaceAll(buf, oldCmd, []byte("github.com/facebook/ent/cmd/ent")), 0644)
+	_ = os.WriteFile(target, bytes.ReplaceAll(buf, oldCmd, []byte("entgo.io/ent/cmd/ent")), 0644)
 }

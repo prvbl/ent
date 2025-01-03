@@ -4,21 +4,26 @@ This source code is licensed under the Apache 2.0 license found
 in the LICENSE file in the root directory of this source tree.
 */}}
 
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+
 {{ define "dialect/sql/entql" }}
 
 {{ $pkg := base $.Config.Package }}
 {{ template "header" $ }}
 
 import (
+	"context"
+	"time"
+
 	"{{ $.Config.Package }}/predicate"
 	{{- range $n := $.Nodes }}
-		"{{ $.Config.Package }}/{{ $n.Package }}"
+		{{ $n.PackageAlias }} "{{ $.Config.Package }}/{{ $n.PackageDir }}"
 	{{- end }}
 
-	"github.com/facebook/ent/dialect/sql"
-	"github.com/facebook/ent/dialect/sql/sqlgraph"
-	"github.com/facebook/ent/entql"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/entql"
+	"entgo.io/ent/schema/field"
 )
 
 // schemaGraph holds a representation of ent/schema at runtime.
@@ -29,10 +34,21 @@ var schemaGraph = func() *sqlgraph.Schema {
 			NodeSpec: sqlgraph.NodeSpec{
 				Table: {{ $n.Package }}.Table,
 				Columns: {{ $n.Package }}.Columns,
-				ID: &sqlgraph.FieldSpec{
-					Type: field.{{ $n.ID.Type.ConstName }},
-					Column: {{ $n.Package }}.{{ $n.ID.Constant }},
-				},
+				{{- if $n.HasOneFieldID }}
+					ID: &sqlgraph.FieldSpec{
+						Type: field.{{ $n.ID.Type.ConstName }},
+						Column: {{ $n.Package }}.{{ $n.ID.Constant }},
+					},
+				{{- else }}
+					CompositeID: []*sqlgraph.FieldSpec{
+						{{- range $id := $n.EdgeSchema.ID }}
+							{
+								Type: field.{{ $id.Type.ConstName }},
+								Column: {{ $n.Package }}.{{ $id.Constant }},
+							},
+						{{- end }}
+					},
+				{{- end }}
 			},
 			Type: "{{ $n.Name }}",
 			Fields: map[string]*sqlgraph.FieldSpec{
@@ -80,7 +96,7 @@ type predicateAdder interface {
 
 	// Filter returns a Filter implementation to apply filters on the {{ $builder }} builder.
 	func ({{ $receiver }} *{{ $builder }}) Filter() *{{ $filter }} {
-		return &{{ $filter }}{ {{ $receiver }} }
+		return &{{ $filter }}{config: {{ $receiver }}.config, predicateAdder: {{ $receiver}} }
 	}
 
 	// addPredicate implements the predicateAdder interface.
@@ -90,12 +106,13 @@ type predicateAdder interface {
 
 	// Filter returns an entql.Where implementation to apply filters on the {{ $mutation }} builder.
 	func (m *{{ $mutation }}) Filter() *{{ $filter }} {
-		return &{{ $filter }}{m}
+		return &{{ $filter }}{config: m.config, predicateAdder: m}
 	}
 
 	// {{ $filter }} provides a generic filtering capability at runtime for {{ $builder }}.
 	type {{ $filter }} struct {
 		predicateAdder
+		config
 	}
 
 	// Where applies the entql predicate on the query filter.
@@ -107,13 +124,18 @@ type predicateAdder interface {
 		})
 	}
 
-	{{ $type := $n.ID.Type.Type.String }}
-	{{ $iface := print (pascal $type) "P" }}
-	{{ if $n.ID.IsUUID }}{{ $iface = "ValueP" }}{{ end }}
-	// WhereID applies the entql {{ $type }} predicate on the id field.
-	func (f *{{ $filter }}) WhereID(p entql.{{ $iface }}) {
-		f.Where(p.Field({{ $n.Package }}.{{ $n.ID.Constant }}))
-	}
+	{{- if $n.HasOneFieldID }}
+		{{ $type := $n.ID.Type.Type.String }}
+		{{ $iface := print (pascal $type) "P" }}
+		{{- if $n.ID.IsTime }}{{ $iface = "TimeP" }}
+		{{- else if or $n.ID.IsBytes $n.ID.IsJSON }}{{ $iface = "BytesP" }}
+		{{- else if $n.ID.IsUUID }}{{ $iface = "ValueP" }}
+		{{- end }}
+		// WhereID applies the entql {{ $type }} predicate on the id field.
+		func (f *{{ $filter }}) WhereID(p entql.{{ $iface }}) {
+			f.Where(p.Field({{ $n.Package }}.{{ $n.ID.Constant }}))
+		}
+	{{- end }}
 
 	{{ range $f := $n.Fields }}
 		{{ $type := $f.Type.Type.String }}

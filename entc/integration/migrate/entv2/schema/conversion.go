@@ -5,9 +5,9 @@
 package schema
 
 import (
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/dialect/entsql"
-	"github.com/facebook/ent/schema/field"
+	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
+	"entgo.io/ent/schema/field"
 )
 
 // Conversion holds the schema definition for the Conversion entity.
@@ -20,7 +20,7 @@ func (Conversion) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("name").
 			Optional(),
-		// convert integer fields to string
+		// Convert integer fields to string
 		// Postgres uses the same type for int8 and int16
 		// Postgres loses unsigned so we have assume value is signed
 		field.String("int8_to_string").

@@ -5,13 +5,13 @@
 package schema
 
 import (
-	"github.com/facebook/ent"
-	"github.com/facebook/ent/entc/integration/ent/template"
-	"github.com/facebook/ent/schema"
-	"github.com/facebook/ent/schema/edge"
-	"github.com/facebook/ent/schema/field"
-	"github.com/facebook/ent/schema/index"
-	"github.com/facebook/ent/schema/mixin"
+	"entgo.io/ent"
+	"entgo.io/ent/entc/integration/ent/template"
+	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
+	"entgo.io/ent/schema/index"
+	"entgo.io/ent/schema/mixin"
 )
 
 type CardMixin struct {
@@ -21,7 +21,7 @@ type CardMixin struct {
 func (CardMixin) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		edge.Annotation{
-			StructTag: `json:"card_edges" mashraki:"edges"`,
+			StructTag: `mashraki:"edges"`,
 		},
 		field.Annotation{
 			StructTag: map[string]string{
@@ -57,6 +57,8 @@ func (Card) Annotations() []schema.Annotation {
 // Fields of the Comment.
 func (Card) Fields() []ent.Field {
 	return []ent.Field{
+		field.Float("balance").
+			Default(0),
 		field.String("number").
 			Immutable().
 			NotEmpty().
@@ -65,7 +67,7 @@ func (Card) Fields() []ent.Field {
 			}),
 		field.String("name").
 			Optional().
-			Comment("Exact name written on card").
+			Comment("Name exactly as written on card.").
 			NotEmpty().
 			Annotations(&template.Extension{
 				Type: "string",
@@ -77,7 +79,7 @@ func (Card) Fields() []ent.Field {
 func (Card) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.From("owner", User.Type).
-			Comment("O2O inverse edge").
+			Comment("Owner of the card. O2O inverse edge").
 			Ref("card").
 			Unique(),
 		edge.From("spec", Spec.Type).
@@ -92,7 +94,8 @@ func (Card) Edges() []ent.Edge {
 func (Card) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("id"),
-		index.Fields("number"),
+		index.Fields("number").
+			Unique(),
 		index.Fields("id", "name", "number"),
 	}
 }
