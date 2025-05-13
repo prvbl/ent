@@ -38,13 +38,20 @@ in the LICENSE file in the root directory of this source tree.
 	{{ $nillableC := and $creator (or $f.Optional $f.Default) }}
 	{{ $nillableU := and $updater (not $f.UpdateDefault) }}
 	{{ $nillableFunc := print "SetNillable" $f.StructField }}
+	{{ $clearFunc := print "Clear" $f.StructField }}
 	{{ $skipNillable := false }}{{ range $fields }}{{ if and (ne .Name $f.Name) (eq .MutationSet $nillableFunc) }}{{ $skipNillable = true }}{{ break }}{{ end }}{{ end }}
 	{{ if and (not $f.Type.Nillable) (not $skipNillable) (or $nillableC $nillableU) }}
 		// {{ $nillableFunc }} sets the "{{ $f.Name }}" field if the given value is not nil.
 		func ({{ $receiver }} *{{ $builder }}) {{ $nillableFunc }}({{ $p }} *{{ $f.Type }}) *{{ $builder }} {
 			if {{ $p }} != nil {
 				{{ $receiver }}.{{ $func }}(*{{ $p }})
+			{{ if and $.ExplicitlySetNil $f.Optional -}}
+			} else {
+				{{ $receiver }}.mutation.{{ $clearFunc }}()
 			}
+			{{ else -}}
+			}
+			{{- end }}
 			return {{ $receiver }}
 		}
 	{{ end }}

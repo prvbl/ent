@@ -1020,6 +1020,14 @@ func (t Type) RelatedTypes() []*Type {
 	return related
 }
 
+// ExplicitlySetNil specifies if we should explicitly set nil during creates
+func (t Type) ExplicitlySetNil() bool {
+	if ant := t.EntSQL(); ant != nil && ant.ExplicitlySetNil != nil {
+		return *ant.ExplicitlySetNil
+	}
+	return false
+}
+
 // ValidSchemaName will determine if a name is going to conflict with any
 // pre-defined names
 func ValidSchemaName(name string) error {
